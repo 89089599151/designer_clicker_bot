@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from math import floor
-from typing import AsyncIterator, Deque, Dict, List, Literal, Optional, Tuple
+from typing import AsyncIterator, Deque, Dict, List, Literal, Optional, Set, Tuple
 
 # --- .env ---
 try:
@@ -67,6 +67,7 @@ from sqlalchemy import (
     select,
     func,
     update,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import (
@@ -150,58 +151,74 @@ logger = logging.getLogger("designer_clicker_single")
 
 class RU:
     # Главное меню
-    BTN_CLICK = "Клик"
-    BTN_ORDERS = "Заказы"
-    BTN_SHOP = "Магазин"
-    BTN_TEAM = "Команда"
-    BTN_WARDROBE = "Гардероб"
-    BTN_PROFILE = "Профиль"
+    BTN_CLICK = "🖱️ Клик"
+    BTN_ORDERS = "📋 Заказы"
+    BTN_SHOP = "🛒 Магазин"
+    BTN_TEAM = "🧑‍🤝‍🧑 Команда"
+    BTN_WARDROBE = "🎽 Гардероб"
+    BTN_PROFILE = "👤 Профиль"
+    BTN_STATS = "📊 Статистика"
+    BTN_ACHIEVEMENTS = "🏆 Достижения"
 
     # Общие
-    BTN_MENU = "В меню"
-    BTN_PREV = "◀️ Назад"
-    BTN_NEXT = "Вперёд ▶️"
-    BTN_TAKE = "Взять заказ"
-    BTN_CANCEL = "Отмена"
-    BTN_CONFIRM = "Подтвердить"
-    BTN_EQUIP = "Экипировать"
-    BTN_BUY = "Купить"
-    BTN_UPGRADE = "Повысить"
-    BTN_BOOSTS = "Бусты"
-    BTN_EQUIPMENT = "Экипировка"
-    BTN_DAILY = "Ежедневный бонус"
-    BTN_CANCEL_ORDER = "Отменить заказ"
+    BTN_MENU = "🏠 Меню"
+    BTN_PREV = "⏮️ Страница назад"
+    BTN_NEXT = "Страница вперёд ▶️"
+    BTN_TAKE = "🚀 Взять заказ"
+    BTN_CANCEL = "❌ Отмена"
+    BTN_CONFIRM = "✅ Подтвердить"
+    BTN_EQUIP = "🧩 Экипировать"
+    BTN_BUY = "💳 Купить"
+    BTN_UPGRADE = "⚙️ Повысить"
+    BTN_BOOSTS = "⚡ Бусты"
+    BTN_EQUIPMENT = "🧰 Экипировка"
+    BTN_DAILY = "🎁 Ежедневный бонус"
+    BTN_CANCEL_ORDER = "🛑 Отменить заказ"
+    BTN_BACK = "◀️ Назад"
+    BTN_HOME = "🏠 Меню"
+    BTN_TUTORIAL_NEXT = "➡️ Далее"
+    BTN_TUTORIAL_SKIP = "⏭️ Пропустить"
+    BTN_SHOW_ACHIEVEMENTS = "🏆 Посмотреть достижения"
 
     # Сообщения
     BOT_STARTED = "Бот запущен."
-    WELCOME = "Добро пожаловать в «Дизайнер»! На старте у вас уже 200 ₽ — выберите действие."
-    MENU_HINT = "Главное меню: выберите направление развития."
-    TOO_FAST = "Темп слишком высокий. Дождитесь восстановления лимита."
-    NO_ACTIVE_ORDER = "У вас нет активного заказа. Откройте раздел «Заказы»."
-    CLICK_PROGRESS = "Прогресс: {cur}/{req} кликов ({pct}%)."
-    ORDER_TAKEN = "Вы взяли заказ «{title}». Удачи!"
-    ORDER_ALREADY = "У вас уже есть активный заказ."
-    ORDER_DONE = "Заказ завершён! Награда: {rub} ₽, XP: {xp}."
-    ORDER_CANCELED = "Заказ отменён. Прогресс сброшен."
-    INSUFFICIENT_FUNDS = "Недостаточно средств."
-    PURCHASE_OK = "Покупка успешна."
-    UPGRADE_OK = "Повышение выполнено."
-    EQUIP_OK = "Экипировано."
-    EQUIP_NOITEM = "Сначала купите предмет."
-    DAILY_OK = "Начислен ежедневный бонус: {rub} ₽."
-    DAILY_WAIT = "Бонус уже получен. Загляните позже."
+    WELCOME = "🎨 Добро пожаловать в «Дизайнер»! У вас уже 200 ₽ стартового капитала — попробуйте любой раздел ниже."
+    MENU_HINT = "📍 Главное меню: выберите направление развития."
+    TOO_FAST = "⏳ Темп слишком высокий. Дождитесь восстановления лимита."
+    NO_ACTIVE_ORDER = "🧾 У вас нет активного заказа. Загляните в раздел «Заказы»."
+    CLICK_PROGRESS = "🖱️ Прогресс: {cur}/{req} кликов ({pct}%)."
+    ORDER_TAKEN = "🚀 Вы взяли заказ «{title}». Удачи!"
+    ORDER_ALREADY = "⚠️ У вас уже есть активный заказ."
+    ORDER_DONE = "✅ Заказ завершён! Награда: {rub} ₽, XP: {xp}."
+    ORDER_CANCELED = "↩️ Заказ отменён. Прогресс сброшен."
+    INSUFFICIENT_FUNDS = "💸 Недостаточно средств."
+    PURCHASE_OK = "🛒 Покупка успешна!"
+    UPGRADE_OK = "🔼 Повышение выполнено."
+    EQUIP_OK = "🧩 Экипировка активирована."
+    EQUIP_NOITEM = "🕹️ Сначала купите предмет."
+    DAILY_OK = "🎁 Начислен ежедневный бонус: {rub} ₽."
+    DAILY_WAIT = "⏰ Бонус уже получен. Загляните позже."
     PROFILE = (
-        "Профиль\n"
-        "Уровень: {lvl}\nXP: {xp}/{xp_need}\n"
-        "Баланс: {rub} ₽\n"
-        "CP: {cp}\n"
-        "Пассивный доход: {pm}/мин\n"
-        "Текущий заказ: {order}"
+        "👤 Профиль\n"
+        "🏅 Уровень: {lvl}\n✨ XP: {xp}/{xp_need}\n"
+        "💰 Баланс: {rub} ₽\n"
+        "🖱️ Сила клика: {cp}\n"
+        "💤 Пассивный доход: {pm}/мин\n"
+        "📌 Текущий заказ: {order}"
     )
-    TEAM_HEADER = "Команда (доход/мин, уровень, цена повышения):"
-    SHOP_HEADER = "Магазин: выберите раздел для прокачки."
-    WARDROBE_HEADER = "Гардероб: слоты и доступные предметы."
-    ORDERS_HEADER = "Доступные заказы (введите номер для выбора):"
+    TEAM_HEADER = "🧑‍🤝‍🧑 Команда (доход/мин, уровень, цена повышения):"
+    SHOP_HEADER = "🛒 Магазин: выберите раздел для прокачки."
+    WARDROBE_HEADER = "🎽 Гардероб: слоты и доступные предметы."
+    ORDERS_HEADER = "📋 Доступные заказы (введите номер для выбора):"
+    STATS_HEADER = "📊 Глобальная статистика"
+    ACHIEVEMENT_UNLOCK = "🏆 Новое достижение: {title}!"
+    ACHIEVEMENTS_TITLE = "🏆 Достижения"
+    ACHIEVEMENTS_EMPTY = "Пока нет достижений — продолжайте играть!"
+    ACHIEVEMENTS_ENTRY = "{icon} {name} — {desc}"
+    TUTORIAL_DONE = "🎓 Обучение завершено! Нажмите кнопку в меню, чтобы продолжить."
+    TUTORIAL_HINT = "⚡ Готовы начать играть? Нажмите «{button}» внизу."
+    STATS_ROW = "• {label}: {value}"
+    STATS_NO_DATA = "Данных пока недостаточно."
 
     # Форматирование
     CURRENCY = "₽"
@@ -211,24 +228,39 @@ class RU:
 # Клавиатуры (только ReplyKeyboard)
 # ----------------------------------------------------------------------------
 
+def _with_universal_nav(rows: List[List[KeyboardButton]]) -> ReplyKeyboardMarkup:
+    keyboard = [list(r) for r in rows]
+    nav_back = [KeyboardButton(text=RU.BTN_BACK), KeyboardButton(text=RU.BTN_CANCEL)]
+    nav_home = [KeyboardButton(text=RU.BTN_HOME)]
+    if not any(len(row) == len(nav_back) and all(btn.text == nav_back[idx].text for idx, btn in enumerate(row)) for row in keyboard):
+        keyboard.append(nav_back)
+    if not any(len(row) == len(nav_home) and all(btn.text == nav_home[idx].text for idx, btn in enumerate(row)) for row in keyboard):
+        keyboard.append(nav_home)
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        selective=False,
+    )
+
+
 def kb_main_menu() -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text=RU.BTN_CLICK), KeyboardButton(text=RU.BTN_ORDERS)],
         [KeyboardButton(text=RU.BTN_SHOP), KeyboardButton(text=RU.BTN_TEAM)],
         [KeyboardButton(text=RU.BTN_WARDROBE), KeyboardButton(text=RU.BTN_PROFILE)],
+        [KeyboardButton(text=RU.BTN_STATS), KeyboardButton(text=RU.BTN_ACHIEVEMENTS)],
     ]
     return ReplyKeyboardMarkup(
-        keyboard=keyboard, resize_keyboard=True, one_time_keyboard=False, selective=False
-    )
-
-
-def kb_menu_only() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=RU.BTN_MENU)]],
+        keyboard=keyboard,
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
     )
+
+
+def kb_menu_only() -> ReplyKeyboardMarkup:
+    return _with_universal_nav([])
 
 
 def kb_numeric_page(show_prev: bool, show_next: bool) -> ReplyKeyboardMarkup:
@@ -238,44 +270,68 @@ def kb_numeric_page(show_prev: bool, show_next: bool) -> ReplyKeyboardMarkup:
         nav_row.append(KeyboardButton(text=RU.BTN_PREV))
     if show_next:
         nav_row.append(KeyboardButton(text=RU.BTN_NEXT))
-    kb = [numbers]
+    rows: List[List[KeyboardButton]] = [numbers]
     if nav_row:
-        kb.append(nav_row)
-    kb.append([KeyboardButton(text=RU.BTN_MENU)])
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=False)
+        rows.append(nav_row)
+    return _with_universal_nav(rows)
 
 
 def kb_confirm(confirm_text: str = RU.BTN_CONFIRM) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=confirm_text), KeyboardButton(text=RU.BTN_CANCEL)],
-            [KeyboardButton(text=RU.BTN_MENU)],
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-    )
+    rows = [[KeyboardButton(text=confirm_text), KeyboardButton(text=RU.BTN_CANCEL)]]
+    return _with_universal_nav(rows)
 
 
 def kb_shop_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=RU.BTN_BOOSTS), KeyboardButton(text=RU.BTN_EQUIPMENT)],
-            [KeyboardButton(text=RU.BTN_MENU)],
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-    )
+    rows = [[KeyboardButton(text=RU.BTN_BOOSTS), KeyboardButton(text=RU.BTN_EQUIPMENT)]]
+    return _with_universal_nav(rows)
 
 
 def kb_profile_menu(has_active_order: bool) -> ReplyKeyboardMarkup:
     row1 = [KeyboardButton(text=RU.BTN_DAILY)]
     if has_active_order:
         row1.append(KeyboardButton(text=RU.BTN_CANCEL_ORDER))
-    return ReplyKeyboardMarkup(
-        keyboard=[row1, [KeyboardButton(text=RU.BTN_MENU)]],
-        resize_keyboard=True,
-        one_time_keyboard=False,
-    )
+    return _with_universal_nav([row1])
+
+
+def kb_tutorial() -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(text=RU.BTN_TUTORIAL_NEXT), KeyboardButton(text=RU.BTN_TUTORIAL_SKIP)]]
+    return _with_universal_nav(rows)
+
+
+def kb_achievement_prompt() -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(text=RU.BTN_SHOW_ACHIEVEMENTS)]]
+    return _with_universal_nav(rows)
+
+
+TUTORIAL_STEPS = [
+    {
+        "text": "👋 Привет! Здесь вы зарабатываете ₽ кликами. Нажимайте кнопку «Клик», чтобы выполнить первый заказ быстрее.",
+        "button": RU.BTN_CLICK,
+    },
+    {
+        "text": "🧾 Раздел «Заказы» показывает задачи. Выберите заказ, кликайте и получайте ₽ и XP.",
+        "button": RU.BTN_ORDERS,
+    },
+    {
+        "text": "⚡ В «Бустах» усилите клики и пассивный доход, а в «Экипировке» — откройте новые предметы.",
+        "button": RU.BTN_SHOP,
+    },
+    {
+        "text": "🧑‍🤝‍🧑 Нанимайте команду для пассивного дохода и проверяйте прогресс в «Профиле» и «Достижениях».",
+        "button": RU.BTN_PROFILE,
+    },
+]
+
+
+async def send_tutorial_step_message(message: Message, step: int) -> None:
+    """Send a tutorial step with contextual hint buttons."""
+
+    if step >= len(TUTORIAL_STEPS):
+        await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+        return
+    payload = TUTORIAL_STEPS[step]
+    hint = RU.TUTORIAL_HINT.format(button=payload["button"])
+    await message.answer(f"{payload['text']}\n\n{hint}", reply_markup=kb_tutorial())
 
 
 # ----------------------------------------------------------------------------
@@ -364,6 +420,12 @@ class User(Base):
     daily_bonus_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    tutorial_stage: Mapped[int] = mapped_column(Integer, default=0)
+    tutorial_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    clicks_total: Mapped[int] = mapped_column(Integer, default=0)
+    orders_completed: Mapped[int] = mapped_column(Integer, default=0)
+    passive_income_collected: Mapped[int] = mapped_column(Integer, default=0)
+    daily_bonus_claims: Mapped[int] = mapped_column(Integer, default=0)
 
     orders: Mapped[List["UserOrder"]] = relationship(back_populates="user")
 
@@ -488,6 +550,31 @@ class EconomyLog(Base):
     __table_args__ = (Index("ix_economy_user_created", "user_id", "created_at"),)
 
 
+class Achievement(Base):
+    __tablename__ = "achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(150))
+    description: Mapped[str] = mapped_column(String(300))
+    trigger: Mapped[str] = mapped_column(String(30))
+    threshold: Mapped[int] = mapped_column(Integer)
+    icon: Mapped[str] = mapped_column(String(8), default="🏆")
+
+
+class UserAchievement(Base):
+    __tablename__ = "user_achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    achievement_id: Mapped[int] = mapped_column(ForeignKey("achievements.id", ondelete="CASCADE"))
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    unlocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    notified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "achievement_id", name="uq_user_achievement"),)
+
+
 # ----------------------------------------------------------------------------
 # Подключение к БД
 # ----------------------------------------------------------------------------
@@ -517,7 +604,30 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 async def prepare_database() -> None:
     """Ensure that database schema and seed data are initialized exactly once."""
     async with session_scope() as session:
+        await ensure_schema(session)
         await seed_if_needed(session)
+
+
+async def ensure_schema(session: AsyncSession) -> None:
+    """Add missing columns/tables for backward compatibility without full migrations."""
+
+    async def _existing_columns(table: str) -> Set[str]:
+        rows = await session.execute(text(f"PRAGMA table_info({table})"))
+        return {row[1] for row in rows}
+
+    user_columns = await _existing_columns("users")
+    if "tutorial_stage" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN tutorial_stage INTEGER NOT NULL DEFAULT 0"))
+    if "tutorial_completed_at" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN tutorial_completed_at DATETIME"))
+    if "clicks_total" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN clicks_total INTEGER NOT NULL DEFAULT 0"))
+    if "orders_completed" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN orders_completed INTEGER NOT NULL DEFAULT 0"))
+    if "passive_income_collected" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN passive_income_collected INTEGER NOT NULL DEFAULT 0"))
+    if "daily_bonus_claims" not in user_columns:
+        await session.execute(text("ALTER TABLE users ADD COLUMN daily_bonus_claims INTEGER NOT NULL DEFAULT 0"))
 
 
 # ----------------------------------------------------------------------------
@@ -553,17 +663,33 @@ SEED_ITEMS = [
 
     {"code": "phone_t1", "name": "Смартфон T1", "slot": "phone", "tier": 1, "bonus_type": "passive_pct", "bonus_value": 0.03, "price": 200, "min_level": 1},
     {"code": "phone_t2", "name": "Смартфон T2", "slot": "phone", "tier": 2, "bonus_type": "passive_pct", "bonus_value": 0.06, "price": 400, "min_level": 2},
+    {"code": "phone_t3", "name": "Смартфон T3", "slot": "phone", "tier": 3, "bonus_type": "passive_pct", "bonus_value": 0.10, "price": 750, "min_level": 3},
 
     {"code": "tablet_t1", "name": "Планшет T1", "slot": "tablet", "tier": 1, "bonus_type": "req_clicks_pct", "bonus_value": 0.02, "price": 300, "min_level": 1},
     {"code": "tablet_t2", "name": "Планшет T2", "slot": "tablet", "tier": 2, "bonus_type": "req_clicks_pct", "bonus_value": 0.04, "price": 600, "min_level": 2},
+    {"code": "tablet_t3", "name": "Планшет T3", "slot": "tablet", "tier": 3, "bonus_type": "req_clicks_pct", "bonus_value": 0.06, "price": 950, "min_level": 3},
 
     {"code": "monitor_t1", "name": "Монитор T1", "slot": "monitor", "tier": 1, "bonus_type": "reward_pct", "bonus_value": 0.04, "price": 350, "min_level": 1},
     {"code": "monitor_t2", "name": "Монитор T2", "slot": "monitor", "tier": 2, "bonus_type": "reward_pct", "bonus_value": 0.08, "price": 700, "min_level": 2},
+    {"code": "monitor_t3", "name": "Монитор T3", "slot": "monitor", "tier": 3, "bonus_type": "reward_pct", "bonus_value": 0.12, "price": 1050, "min_level": 3},
 
     {"code": "chair_t1", "name": "Стул T1", "slot": "chair", "tier": 1, "bonus_type": "ratelimit_plus", "bonus_value": 0, "price": 150, "min_level": 1},
     {"code": "chair_t2", "name": "Стул T2", "slot": "chair", "tier": 2, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 400, "min_level": 2},
     {"code": "chair_t3", "name": "Стул T3", "slot": "chair", "tier": 3, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 600, "min_level": 3},
     {"code": "chair_t4", "name": "Стул T4", "slot": "chair", "tier": 4, "bonus_type": "ratelimit_plus", "bonus_value": 2, "price": 1000, "min_level": 4},
+]
+
+SEED_ACHIEVEMENTS = [
+    {"code": "click_100", "name": "Разогрев пальцев", "description": "Совершите 100 кликов.", "trigger": "clicks", "threshold": 100, "icon": "🖱️"},
+    {"code": "click_1000", "name": "Мастер клика", "description": "Совершите 1000 кликов.", "trigger": "clicks", "threshold": 1000, "icon": "⚡"},
+    {"code": "order_first", "name": "Первый заказ", "description": "Закончите первый заказ.", "trigger": "orders", "threshold": 1, "icon": "📋"},
+    {"code": "order_20", "name": "Портфолио растёт", "description": "Завершите 20 заказов.", "trigger": "orders", "threshold": 20, "icon": "🗂️"},
+    {"code": "level_5", "name": "Ученик", "description": "Достигните 5 уровня.", "trigger": "level", "threshold": 5, "icon": "📈"},
+    {"code": "level_10", "name": "Легенда студии", "description": "Достигните 10 уровня.", "trigger": "level", "threshold": 10, "icon": "🏅"},
+    {"code": "balance_5000", "name": "Капиталист", "description": "Накопите 5000 ₽ на счету.", "trigger": "balance", "threshold": 5000, "icon": "💰"},
+    {"code": "passive_2000", "name": "Доход во сне", "description": "Получите 2000 ₽ пассивного дохода.", "trigger": "passive_income", "threshold": 2000, "icon": "💤"},
+    {"code": "team_3", "name": "Своя студия", "description": "Нанимайте или прокачайте 3 членов команды.", "trigger": "team", "threshold": 3, "icon": "🧑‍🤝‍🧑"},
+    {"code": "wardrobe_5", "name": "Коллекционер", "description": "Соберите 5 предметов экипировки.", "trigger": "items", "threshold": 5, "icon": "🎽"},
 ]
 
 
@@ -593,6 +719,20 @@ async def seed_if_needed(session: AsyncSession) -> None:
             session.add(Item(code=d["code"], name=d["name"], slot=d["slot"], tier=d["tier"],
                              bonus_type=d["bonus_type"], bonus_value=d["bonus_value"],
                              price=d["price"], min_level=d["min_level"]))
+    # Достижения
+    cnt = (await session.execute(select(func.count()).select_from(Achievement))).scalar_one()
+    if cnt == 0:
+        for d in SEED_ACHIEVEMENTS:
+            session.add(
+                Achievement(
+                    code=d["code"],
+                    name=d["name"],
+                    description=d["description"],
+                    trigger=d["trigger"],
+                    threshold=d["threshold"],
+                    icon=d["icon"],
+                )
+            )
     # Санируем старые записи user_orders без снимка множителя
     await session.execute(
         update(UserOrder)
@@ -720,6 +860,7 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
         )
     if amount > 0:
         user.balance += amount
+        user.passive_income_collected += amount
         session.add(
             EconomyLog(
                 user_id=user.id,
@@ -731,6 +872,19 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
         )
         logger.debug("Offline income for user %s: +%s", user.tg_id, amount)
     return amount
+
+
+async def process_offline_income(
+    session: AsyncSession,
+    user: User,
+    achievements: List[Tuple[Achievement, UserAchievement]],
+) -> int:
+    """Apply offline income and append relevant achievements if any."""
+
+    gained = await apply_offline_income(session, user)
+    if gained:
+        achievements.extend(await evaluate_achievements(session, user, {"passive_income", "balance"}))
+    return gained
 
 
 def snapshot_required_clicks(order: Order, user_level: int, req_clicks_pct: float) -> int:
@@ -781,6 +935,188 @@ async def add_xp_and_levelup(user: User, xp_gain: int) -> None:
     user.level = lvl
 
 
+def project_next_item_params(item: Item) -> Tuple[float, int]:
+    """Return projected bonus value and price for the next tier of an item."""
+
+    if item.bonus_type == "ratelimit_plus":
+        bonus = item.bonus_value + 1
+    elif item.bonus_type in {"cp_pct", "passive_pct", "reward_pct"}:
+        bonus = round(item.bonus_value * 1.25, 3)
+    elif item.bonus_type == "req_clicks_pct":
+        bonus = round(min(0.95, item.bonus_value + 0.02), 3)
+    else:
+        bonus = item.bonus_value
+    price = int(round(item.price * 1.65))
+    return bonus, price
+
+
+async def get_next_items_for_user(session: AsyncSession, user: User) -> List[Item]:
+    """Return only the next tier items per slot available for purchase."""
+
+    items = (
+        await session.execute(
+            select(Item).where(Item.min_level <= user.level).order_by(Item.slot, Item.tier)
+        )
+    ).scalars().all()
+    owned_ids = {
+        row[0]
+        for row in (
+            await session.execute(select(UserItem.item_id).where(UserItem.user_id == user.id))
+        ).all()
+    }
+    result: List[Item] = []
+    grouped: Dict[str, List[Item]] = defaultdict(list)
+    for item in items:
+        grouped[item.slot].append(item)
+    for slot_items in grouped.values():
+        slot_items.sort(key=lambda x: x.tier)
+        for item in slot_items:
+            if item.id not in owned_ids:
+                result.append(item)
+                break
+    result.sort(key=lambda it: (it.slot, it.tier))
+    return result
+
+
+async def get_achievement_progress_value(
+    session: AsyncSession, user: User, trigger: str
+) -> int:
+    """Resolve current progress for the given achievement trigger."""
+
+    if trigger == "clicks":
+        return user.clicks_total
+    if trigger == "orders":
+        return user.orders_completed
+    if trigger == "level":
+        return user.level
+    if trigger == "balance":
+        return user.balance
+    if trigger == "passive_income":
+        return user.passive_income_collected
+    if trigger == "team":
+        value = await session.scalar(
+            select(func.count()).select_from(UserTeam).where(UserTeam.user_id == user.id, UserTeam.level > 0)
+        )
+        return int(value or 0)
+    if trigger == "items":
+        value = await session.scalar(
+            select(func.count()).select_from(UserItem).where(UserItem.user_id == user.id)
+        )
+        return int(value or 0)
+    if trigger == "daily":
+        return user.daily_bonus_claims
+    return 0
+
+
+async def evaluate_achievements(
+    session: AsyncSession, user: User, triggers: Set[str]
+) -> List[Tuple[Achievement, UserAchievement]]:
+    """Check and unlock achievements for provided triggers, returning newly unlocked ones."""
+
+    if not triggers:
+        return []
+    achievements = (
+        await session.execute(
+            select(Achievement)
+            .where(Achievement.trigger.in_(list(triggers)))
+            .order_by(Achievement.id)
+        )
+    ).scalars().all()
+    if not achievements:
+        return []
+    existing = {
+        ua.achievement_id: ua
+        for ua in (
+            await session.execute(
+                select(UserAchievement).where(
+                    UserAchievement.user_id == user.id,
+                    UserAchievement.achievement_id.in_([ach.id for ach in achievements]),
+                )
+            )
+        ).scalars()
+    }
+    unlocked: List[Tuple[Achievement, UserAchievement]] = []
+    progress_cache: Dict[str, int] = {}
+
+    async def _progress(trigger: str) -> int:
+        if trigger not in progress_cache:
+            progress_cache[trigger] = await get_achievement_progress_value(session, user, trigger)
+        return progress_cache[trigger]
+
+    for ach in achievements:
+        ua = existing.get(ach.id)
+        progress_value = await _progress(ach.trigger)
+        if ua:
+            ua.progress = progress_value
+        if progress_value >= ach.threshold:
+            if not ua:
+                ua = UserAchievement(
+                    user_id=user.id,
+                    achievement_id=ach.id,
+                    progress=progress_value,
+                    unlocked_at=utcnow(),
+                    notified=False,
+                )
+                session.add(ua)
+            else:
+                if ua.unlocked_at is None:
+                    ua.unlocked_at = utcnow()
+                ua.notified = ua.notified and ua.unlocked_at is not None
+            if ua and not ua.notified:
+                unlocked.append((ach, ua))
+        else:
+            if not ua:
+                session.add(
+                    UserAchievement(
+                        user_id=user.id,
+                        achievement_id=ach.id,
+                        progress=progress_value,
+                        unlocked_at=None,
+                        notified=False,
+                    )
+                )
+    return unlocked
+
+
+async def notify_new_achievements(
+    message: Message, unlocked: List[Tuple[Achievement, UserAchievement]]
+) -> None:
+    """Send notification about unlocked achievements and mark them as notified."""
+
+    if not unlocked:
+        return
+    lines = [RU.ACHIEVEMENT_UNLOCK.format(title=f"{ach.icon} {ach.name}") for ach, _ in unlocked]
+    await message.answer("\n".join(lines), reply_markup=kb_achievement_prompt())
+    for _, ua in unlocked:
+        ua.notified = True
+
+
+async def fetch_global_stats(session: AsyncSession) -> Dict[str, float]:
+    """Aggregate global metrics across all players."""
+
+    total_players = await session.scalar(select(func.count()).select_from(User)) or 0
+    avg_level = await session.scalar(select(func.avg(User.level))) or 0.0
+
+    passive_sub = (
+        select(EconomyLog.user_id, func.sum(EconomyLog.amount).label("total"))
+        .where(EconomyLog.type == "passive")
+        .group_by(EconomyLog.user_id)
+        .subquery()
+    )
+    active_sub = (
+        select(EconomyLog.user_id, func.sum(EconomyLog.amount).label("total"))
+        .where(EconomyLog.type == "order_finish")
+        .group_by(EconomyLog.user_id)
+        .subquery()
+    )
+    avg_passive = await session.scalar(select(func.coalesce(func.avg(passive_sub.c.total), 0.0))) or 0.0
+    avg_active = await session.scalar(select(func.coalesce(func.avg(active_sub.c.total), 0.0))) or 0.0
+    return {
+        "players": float(total_players),
+        "avg_level": float(avg_level),
+        "avg_passive": float(avg_passive),
+        "avg_active": float(avg_active),
+    }
 # ----------------------------------------------------------------------------
 # Анти-флуд (middleware)
 # ----------------------------------------------------------------------------
@@ -841,6 +1177,11 @@ async def get_user_click_limit(tg_id: int) -> int:
 # FSM состояния
 # ----------------------------------------------------------------------------
 
+
+class TutorialState(StatesGroup):
+    step = State()
+
+
 class OrdersState(StatesGroup):
     browsing = State()
     confirm = State()
@@ -875,12 +1216,14 @@ class ProfileState(StatesGroup):
 router = Router()
 
 
-async def get_or_create_user(tg_id: int, first_name: str) -> User:
+async def get_or_create_user(tg_id: int, first_name: str) -> Tuple[User, bool]:
     """Fetch existing user or create a new record."""
 
     async with session_scope() as session:
         user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        created = False
         if not user:
+            created = True
             now = utcnow()
             user = User(
                 tg_id=tg_id,
@@ -910,7 +1253,7 @@ async def get_or_create_user(tg_id: int, first_name: str) -> User:
         else:
             await apply_offline_income(session, user)
             logger.debug("Existing user resumed session", extra={"tg_id": tg_id})
-        return user
+        return user, created
 
 
 async def get_user_by_tg(session: AsyncSession, tg_id: int) -> Optional[User]:
@@ -931,19 +1274,61 @@ async def ensure_user_loaded(session: AsyncSession, message: Message) -> Optiona
 
 @router.message(CommandStart())
 @safe_handler
-async def cmd_start(message: Message):
-    user = await get_or_create_user(message.from_user.id, message.from_user.first_name or "")
-    logger.info("User issued /start", extra={"tg_id": message.from_user.id, "user_id": user.id})
+async def cmd_start(message: Message, state: FSMContext):
+    user, created = await get_or_create_user(message.from_user.id, message.from_user.first_name or "")
+    logger.info(
+        "User issued /start",
+        extra={"tg_id": message.from_user.id, "user_id": user.id, "created": created},
+    )
     await message.answer(RU.WELCOME, reply_markup=kb_main_menu())
+    if created or (user.tutorial_completed_at is None and user.tutorial_stage < len(TUTORIAL_STEPS)):
+        await state.set_state(TutorialState.step)
+        await send_tutorial_step_message(message, user.tutorial_stage)
 
 
-@router.message(F.text == RU.BTN_MENU)
+@router.message(TutorialState.step, F.text == RU.BTN_TUTORIAL_NEXT)
+@safe_handler
+async def tutorial_next(message: Message, state: FSMContext):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        next_step = min(user.tutorial_stage + 1, len(TUTORIAL_STEPS))
+        user.tutorial_stage = next_step
+        if next_step >= len(TUTORIAL_STEPS):
+            user.tutorial_completed_at = utcnow()
+            user.updated_at = utcnow()
+            await state.clear()
+            await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+        else:
+            await send_tutorial_step_message(message, next_step)
+
+
+@router.message(TutorialState.step, F.text == RU.BTN_TUTORIAL_SKIP)
+@safe_handler
+async def tutorial_skip(message: Message, state: FSMContext):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        user.tutorial_stage = len(TUTORIAL_STEPS)
+        user.tutorial_completed_at = utcnow()
+        user.updated_at = utcnow()
+    await state.clear()
+    await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+
+
+@router.message(F.text.in_({RU.BTN_MENU, RU.BTN_HOME}))
 @safe_handler
 async def back_to_menu(message: Message):
     async with session_scope() as session:
         user = await get_user_by_tg(session, message.from_user.id)
         if user:
-            await apply_offline_income(session, user)
+            achievements: List[Tuple[Achievement, UserAchievement]] = []
+            await process_offline_income(session, user, achievements)
+            await notify_new_achievements(message, achievements)
     await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
 
 
@@ -956,13 +1341,16 @@ async def handle_click(message: Message):
         user = await ensure_user_loaded(session, message)
         if not user:
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         active = await get_active_order(session, user)
         if not active:
             await message.answer(RU.NO_ACTIVE_ORDER)
             return
         stats = await get_user_stats(session, user)
         cp = stats["cp"]
+        user.clicks_total += cp
+        achievements.extend(await evaluate_achievements(session, user, {"clicks"}))
         prev = active.progress_clicks
         active.progress_clicks = min(active.required_clicks, active.progress_clicks + cp)
         if (active.progress_clicks // 10) > (prev // 10) or active.progress_clicks == active.required_clicks:
@@ -975,6 +1363,7 @@ async def handle_click(message: Message):
             xp_gain = int(round(active.required_clicks * 0.1))
             now = utcnow()
             user.balance += reward
+            user.orders_completed += 1
             await add_xp_and_levelup(user, xp_gain)
             user.updated_at = now
             active.finished = True
@@ -997,6 +1386,8 @@ async def handle_click(message: Message):
                 },
             )
             await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain))
+            achievements.extend(await evaluate_achievements(session, user, {"orders", "level", "balance"}))
+        await notify_new_achievements(message, achievements)
 
 
 # --- Заказы ---
@@ -1022,7 +1413,8 @@ async def _render_orders_page(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         all_orders = (
             await session.execute(
                 select(Order)
@@ -1035,6 +1427,7 @@ async def _render_orders_page(message: Message, state: FSMContext):
         sub, has_prev, has_next = slice_page(all_orders, page, 5)
         await message.answer(fmt_orders(sub), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(order_ids=[o.id for o in sub], page=page)
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(OrdersState.browsing, F.text.in_({"1", "2", "3", "4", "5"}))
@@ -1150,7 +1543,8 @@ async def render_boosts(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         boosts = (
             await session.execute(select(Boost).order_by(Boost.id))
         ).scalars().all()
@@ -1171,6 +1565,7 @@ async def render_boosts(message: Message, state: FSMContext):
             lines.append(f"[{i}] {b.name} — ур. след. {lvl_next}, {cost} {RU.CURRENCY}")
         await message.answer(fmt_boosts(lines), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(boost_ids=[b.id for b in sub], page=page)
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(ShopState.root, F.text == RU.BTN_BOOSTS)
@@ -1236,6 +1631,8 @@ async def shop_buy_boost(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         boost = await session.scalar(select(Boost).where(Boost.id == bid))
         if not boost:
             await message.answer("Буст не найден.", reply_markup=kb_menu_only())
@@ -1275,6 +1672,7 @@ async def shop_buy_boost(message: Message, state: FSMContext):
                 },
             )
             await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
+        await notify_new_achievements(message, achievements)
     await state.clear()
 
 
@@ -1292,7 +1690,17 @@ def fmt_items(items: List[Item]) -> str:
         return "Нет доступных предметов."
     lines = []
     for i, it in enumerate(items, 1):
-        lines.append(f"[{i}] {it.name} ({it.slot}, T{it.tier}) — {it.price} {RU.CURRENCY}")
+        bonus_label = {
+            "cp_pct": "к силе клика",
+            "passive_pct": "к пассивному доходу",
+            "req_clicks_pct": "к требуемым кликам",
+            "reward_pct": "к наградам",
+            "ratelimit_plus": "к лимиту кликов",
+        }.get(it.bonus_type, "к характеристике")
+        bonus_value = f"+{int(it.bonus_value * 100)}%" if "_pct" in it.bonus_type else f"+{int(it.bonus_value)}"
+        lines.append(
+            f"[{i}] {it.name} ({it.slot}, T{it.tier}) — {it.price} {RU.CURRENCY} ({bonus_value} {bonus_label})"
+        )
     return "\n".join(lines)
 
 
@@ -1302,18 +1710,14 @@ async def render_items(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
-        await apply_offline_income(session, user)
-        items = (
-            await session.execute(
-                select(Item)
-                .where(Item.min_level <= user.level)
-                .order_by(Item.slot, Item.tier)
-            )
-        ).scalars().all()
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
+        items = await get_next_items_for_user(session, user)
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(items, page, 5)
         await message.answer(fmt_items(sub), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(item_ids=[it.id for it in sub], page=page)
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(ShopState.root, F.text == RU.BTN_EQUIPMENT)
@@ -1374,6 +1778,8 @@ async def shop_buy_item(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         item = await session.scalar(select(Item).where(Item.id == item_id))
         if not item:
             await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
@@ -1404,8 +1810,24 @@ async def shop_buy_item(message: Message, state: FSMContext):
                 "Item purchased",
                 extra={"tg_id": user.tg_id, "user_id": user.id, "item": item.code},
             )
-            await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
-    await state.clear()
+            achievements.extend(await evaluate_achievements(session, user, {"items"}))
+            next_item = await session.scalar(
+                select(Item).where(Item.slot == item.slot, Item.tier == item.tier + 1)
+            )
+            if next_item:
+                next_hint = f"Следующий уровень: {next_item.name} за {next_item.price} {RU.CURRENCY}."
+            else:
+                proj_bonus, proj_price = project_next_item_params(item)
+                if "_pct" in item.bonus_type:
+                    bonus_str = f"≈+{int(proj_bonus * 100)}%"
+                else:
+                    bonus_str = f"≈+{int(proj_bonus)}"
+                next_hint = f"Следующий уровень (по формуле): {proj_price} {RU.CURRENCY}, {bonus_str}."
+            await message.answer(f"{RU.PURCHASE_OK}\n{next_hint}", reply_markup=kb_menu_only())
+        await notify_new_achievements(message, achievements)
+    await state.set_state(ShopState.equipment)
+    await state.update_data(page=0)
+    await render_items(message, state)
 
 
 @router.message(ShopState.confirm_item, F.text == RU.BTN_CANCEL)
@@ -1432,7 +1854,8 @@ async def render_team(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         members = (
             await session.execute(select(TeamMember).order_by(TeamMember.base_cost, TeamMember.id))
         ).scalars().all()
@@ -1449,6 +1872,7 @@ async def render_team(message: Message, state: FSMContext):
         sub, has_prev, has_next = slice_page(members, page, 5)
         await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(member_ids=[m.id for m in sub], page=page)
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(F.text == RU.BTN_TEAM)
@@ -1506,6 +1930,8 @@ async def team_upgrade(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         member = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
         if not member:
             await message.answer("Сотрудник не найден.", reply_markup=kb_menu_only())
@@ -1545,6 +1971,8 @@ async def team_upgrade(message: Message, state: FSMContext):
                 },
             )
             await message.answer(RU.UPGRADE_OK, reply_markup=kb_menu_only())
+            achievements.extend(await evaluate_achievements(session, user, {"team"}))
+        await notify_new_achievements(message, achievements)
     await state.clear()
 
 
@@ -1572,7 +2000,8 @@ async def render_inventory(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         items = (
             await session.execute(
                 select(Item)
@@ -1585,6 +2014,7 @@ async def render_inventory(message: Message, state: FSMContext):
         sub, has_prev, has_next = slice_page(items, page, 5)
         await message.answer(fmt_inventory(sub), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(inv_ids=[it.id for it in sub], page=page)
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(F.text == RU.BTN_WARDROBE)
@@ -1642,6 +2072,8 @@ async def wardrobe_equip(message: Message, state: FSMContext):
         if not user:
             await state.clear()
             return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         item = await session.scalar(select(Item).where(Item.id == item_id))
         if not item:
             await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
@@ -1667,6 +2099,7 @@ async def wardrobe_equip(message: Message, state: FSMContext):
                 extra={"tg_id": user.tg_id, "user_id": user.id, "item": item.code},
             )
             await message.answer(RU.EQUIP_OK, reply_markup=kb_menu_only())
+        await notify_new_achievements(message, achievements)
     await state.clear()
 
 
@@ -1686,7 +2119,8 @@ async def profile_show(message: Message, state: FSMContext):
         user = await ensure_user_loaded(session, message)
         if not user:
             return
-        await apply_offline_income(session, user)
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         stats = await get_user_stats(session, user)
         rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
         active = await get_active_order(session, user)
@@ -1706,6 +2140,7 @@ async def profile_show(message: Message, state: FSMContext):
             order=order_str,
         )
         await message.answer(text, reply_markup=kb_profile_menu(has_active_order=bool(active)))
+        await notify_new_achievements(message, achievements)
 
 
 @router.message(F.text == RU.BTN_DAILY)
@@ -1715,6 +2150,8 @@ async def profile_daily(message: Message):
         user = await ensure_user_loaded(session, message)
         if not user:
             return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
         now = utcnow()
         last_bonus = ensure_naive(user.daily_bonus_at)
         if last_bonus and (now - last_bonus) < timedelta(hours=24):
@@ -1722,6 +2159,7 @@ async def profile_daily(message: Message):
             return
         user.daily_bonus_at = now
         user.balance += SETTINGS.DAILY_BONUS_RUB
+        user.daily_bonus_claims += 1
         user.updated_at = now
         session.add(
             EconomyLog(
@@ -1734,6 +2172,69 @@ async def profile_daily(message: Message):
         )
         logger.info("Daily bonus collected", extra={"tg_id": user.tg_id, "user_id": user.id})
         await message.answer(RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB), reply_markup=kb_main_menu())
+        achievements.extend(await evaluate_achievements(session, user, {"daily", "balance"}))
+        await notify_new_achievements(message, achievements)
+
+
+@router.message(F.text == RU.BTN_STATS)
+@safe_handler
+async def show_global_stats(message: Message):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
+        stats = await fetch_global_stats(session)
+        await notify_new_achievements(message, achievements)
+    if int(stats["players"]) == 0:
+        await message.answer(RU.STATS_NO_DATA, reply_markup=kb_main_menu())
+        return
+    lines = [
+        RU.STATS_HEADER,
+        "",
+        RU.STATS_ROW.format(label="Средний активный доход", value=f"{stats['avg_active']:.1f} {RU.CURRENCY}"),
+        RU.STATS_ROW.format(label="Средний пассивный доход", value=f"{stats['avg_passive']:.1f} {RU.CURRENCY}"),
+        RU.STATS_ROW.format(label="Средний уровень", value=f"{stats['avg_level']:.1f}"),
+        RU.STATS_ROW.format(label="Игроков всего", value=f"{int(stats['players'])}"),
+    ]
+    await message.answer("\n".join(lines), reply_markup=kb_main_menu())
+
+
+@router.message(F.text.in_({RU.BTN_ACHIEVEMENTS, RU.BTN_SHOW_ACHIEVEMENTS}))
+@safe_handler
+async def show_achievements(message: Message):
+    rows: List[Tuple[Achievement, Optional[UserAchievement]]] = []
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        achievements_new: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements_new)
+        rows = (
+            await session.execute(
+                select(Achievement, UserAchievement)
+                .outerjoin(
+                    UserAchievement,
+                    (UserAchievement.achievement_id == Achievement.id)
+                    & (UserAchievement.user_id == user.id),
+                )
+                .order_by(Achievement.id)
+            )
+        ).all()
+        await notify_new_achievements(message, achievements_new)
+    if not rows:
+        await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=kb_main_menu())
+        return
+    lines = [RU.ACHIEVEMENTS_TITLE, ""]
+    for ach, ua in rows:
+        unlocked = bool(ua and ua.unlocked_at)
+        progress = ua.progress if ua else 0
+        status = "выполнено" if unlocked else f"{progress}/{ach.threshold}"
+        icon = ach.icon if unlocked else "⬜"
+        desc = f"{ach.description} — {status}"
+        lines.append(RU.ACHIEVEMENTS_ENTRY.format(icon=icon, name=ach.name, desc=desc))
+    await message.answer("\n".join(lines), reply_markup=kb_main_menu())
 
 
 @router.message(F.text == RU.BTN_CANCEL_ORDER)
@@ -1755,6 +2256,102 @@ async def profile_cancel_order(message: Message, state: FSMContext):
             extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": active.order_id},
         )
         await message.answer(RU.ORDER_CANCELED, reply_markup=kb_main_menu())
+
+
+@router.message(F.text == RU.BTN_CANCEL)
+@safe_handler
+async def cancel_any(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is None:
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    if current == TutorialState.step.state:
+        await tutorial_skip(message, state)
+        return
+    if current == OrdersState.confirm.state:
+        await state.set_state(OrdersState.browsing)
+        await _render_orders_page(message, state)
+        return
+    if current == ShopState.confirm_boost.state:
+        await state.set_state(ShopState.boosts)
+        await render_boosts(message, state)
+        return
+    if current == ShopState.confirm_item.state:
+        await state.set_state(ShopState.equipment)
+        await render_items(message, state)
+        return
+    if current == TeamState.confirm.state:
+        await state.set_state(TeamState.browsing)
+        await render_team(message, state)
+        return
+    if current == WardrobeState.equip_confirm.state:
+        await state.set_state(WardrobeState.browsing)
+        await render_inventory(message, state)
+        return
+    if current in {
+        OrdersState.browsing.state,
+        ShopState.boosts.state,
+        ShopState.equipment.state,
+        ShopState.root.state,
+        TeamState.browsing.state,
+        WardrobeState.browsing.state,
+        ProfileState.confirm_cancel.state,
+    }:
+        await state.clear()
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    await state.clear()
+    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+
+
+@router.message(F.text == RU.BTN_BACK)
+@safe_handler
+async def handle_back(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current is None:
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    if current == TutorialState.step.state:
+        await tutorial_skip(message, state)
+        return
+    if current == OrdersState.confirm.state:
+        await state.set_state(OrdersState.browsing)
+        await _render_orders_page(message, state)
+        return
+    if current == OrdersState.browsing.state:
+        await state.clear()
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    if current == ShopState.confirm_boost.state:
+        await state.set_state(ShopState.boosts)
+        await render_boosts(message, state)
+        return
+    if current == ShopState.confirm_item.state:
+        await state.set_state(ShopState.equipment)
+        await render_items(message, state)
+        return
+    if current == ShopState.boosts.state or current == ShopState.equipment.state or current == ShopState.root.state:
+        await state.set_state(ShopState.root)
+        await message.answer(RU.SHOP_HEADER, reply_markup=kb_shop_menu())
+        return
+    if current == TeamState.confirm.state:
+        await state.set_state(TeamState.browsing)
+        await render_team(message, state)
+        return
+    if current == TeamState.browsing.state:
+        await state.clear()
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    if current == WardrobeState.equip_confirm.state:
+        await state.set_state(WardrobeState.browsing)
+        await render_inventory(message, state)
+        return
+    if current == WardrobeState.browsing.state:
+        await state.clear()
+        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        return
+    await state.clear()
+    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
 
 
 # ----------------------------------------------------------------------------
