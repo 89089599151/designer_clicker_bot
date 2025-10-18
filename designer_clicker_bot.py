@@ -22,8 +22,10 @@ Designer Clicker Bot — single-file edition (patched)
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -31,7 +33,6 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from math import floor
 from typing import AsyncIterator, Deque, Dict, List, Literal, Optional, Tuple
-import time
 
 # --- .env ---
 try:
@@ -65,6 +66,7 @@ from sqlalchemy import (
     Index,
     select,
     func,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import (
@@ -72,6 +74,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.exc import IntegrityError
 
 # ----------------------------------------------------------------------------
 # Конфиг и логирование
@@ -89,7 +92,55 @@ class Settings:
 
 SETTINGS = Settings()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+MAX_OFFLINE_SECONDS = 12 * 60 * 60
+BASE_CLICK_LIMIT = 10
+MAX_CLICK_LIMIT = 15
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Formatter that emits structured JSON lines for easier ingestion."""
+
+    def format(self, record: logging.LogRecord) -> str:  # noqa: D401 - short implementation
+        payload = {
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        for key, value in record.__dict__.items():
+            if key.startswith("_") or key in payload or key in {
+                "args",
+                "created",
+                "exc_info",
+                "exc_text",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "msg",
+                "name",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "stack_info",
+                "thread",
+                "threadName",
+            }:
+                continue
+            payload.setdefault("extras", {})[key] = value
+        return json.dumps(payload, ensure_ascii=False)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(JsonLogFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger("designer_clicker_single")
 
 # ----------------------------------------------------------------------------
@@ -108,8 +159,8 @@ class RU:
 
     # Общие
     BTN_MENU = "В меню"
-    BTN_PREV = "Назад страница"
-    BTN_NEXT = "Вперёд страница"
+    BTN_PREV = "◀️ Назад"
+    BTN_NEXT = "Вперёд ▶️"
     BTN_TAKE = "Взять заказ"
     BTN_CANCEL = "Отмена"
     BTN_CONFIRM = "Подтвердить"
@@ -123,12 +174,12 @@ class RU:
 
     # Сообщения
     BOT_STARTED = "Бот запущен."
-    WELCOME = "Добро пожаловать в «Дизайнер»! Вам начислено 200 ₽. Выберите действие:"
-    MENU_HINT = "Главное меню:"
-    TOO_FAST = "Слишком быстро! Лимит кликов достигнут."
+    WELCOME = "Добро пожаловать в «Дизайнер»! На старте у вас уже 200 ₽ — выберите действие."
+    MENU_HINT = "Главное меню: выберите направление развития."
+    TOO_FAST = "Темп слишком высокий. Дождитесь восстановления лимита."
     NO_ACTIVE_ORDER = "У вас нет активного заказа. Откройте раздел «Заказы»."
     CLICK_PROGRESS = "Прогресс: {cur}/{req} кликов ({pct}%)."
-    ORDER_TAKEN = "Вы взяли заказ: {title}. Удачи!"
+    ORDER_TAKEN = "Вы взяли заказ «{title}». Удачи!"
     ORDER_ALREADY = "У вас уже есть активный заказ."
     ORDER_DONE = "Заказ завершён! Награда: {rub} ₽, XP: {xp}."
     ORDER_CANCELED = "Заказ отменён. Прогресс сброшен."
@@ -148,9 +199,9 @@ class RU:
         "Текущий заказ: {order}"
     )
     TEAM_HEADER = "Команда (доход/мин, уровень, цена повышения):"
-    SHOP_HEADER = "Магазин — выберите раздел:"
-    WARDROBE_HEADER = "Гардероб — слоты и инвентарь:"
-    ORDERS_HEADER = "Доступные заказы (номер для выбора):"
+    SHOP_HEADER = "Магазин: выберите раздел для прокачки."
+    WARDROBE_HEADER = "Гардероб: слоты и доступные предметы."
+    ORDERS_HEADER = "Доступные заказы (введите номер для выбора):"
 
     # Форматирование
     CURRENCY = "₽"
@@ -322,11 +373,13 @@ class UserOrder(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished: Mapped[bool] = mapped_column(Boolean, default=False)
     canceled: Mapped[bool] = mapped_column(Boolean, default=False)
-    reward_snapshot_mul: Mapped[float] = mapped_column(Float, default=0.0)
+    reward_snapshot_mul: Mapped[float] = mapped_column(Float, default=1.0)
 
     user: Mapped["User"] = relationship(back_populates="orders")
     order: Mapped["Order"] = relationship()
-    # ВАЖНО: не дублируем индекс (index=True на колонке уже создаёт его).
+    __table_args__ = (
+        Index("ix_user_orders_active", "user_id", "finished", "canceled"),
+    )
 
 
 class Boost(Base):
@@ -524,6 +577,12 @@ async def seed_if_needed(session: AsyncSession) -> None:
             session.add(Item(code=d["code"], name=d["name"], slot=d["slot"], tier=d["tier"],
                              bonus_type=d["bonus_type"], bonus_value=d["bonus_value"],
                              price=d["price"], min_level=d["min_level"]))
+    # Санируем старые записи user_orders без снимка множителя
+    await session.execute(
+        update(UserOrder)
+        .where(UserOrder.reward_snapshot_mul <= 0)
+        .values(reward_snapshot_mul=1.0)
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -630,12 +689,18 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
     """Apply passive income accumulated since the last interaction."""
 
     now = utcnow()
-    delta = max(0.0, (now - user.last_seen).total_seconds())
+    delta_raw = max(0.0, (now - user.last_seen).total_seconds())
+    delta = min(delta_raw, MAX_OFFLINE_SECONDS)
     user.last_seen = now
     user.updated_at = now
     stats = await get_user_stats(session, user)
     rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
     amount = int(rate * delta)
+    if delta_raw > MAX_OFFLINE_SECONDS:
+        logger.info(
+            "Offline income capped",
+            extra={"tg_id": user.tg_id, "seconds_raw": int(delta_raw), "seconds_used": int(delta)},
+        )
     if amount > 0:
         user.balance += amount
         session.add(
@@ -643,7 +708,7 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
                 user_id=user.id,
                 type="passive",
                 amount=amount,
-                meta={"sec": int(delta)},
+                meta={"sec": int(delta), "sec_raw": int(delta_raw)},
                 created_at=now,
             )
         )
@@ -659,10 +724,11 @@ def snapshot_required_clicks(order: Order, user_level: int, req_clicks_pct: floa
     return max(1, reduced)
 
 
-def finish_order_reward(required_clicks_snapshot: int, reward_mul_total: float) -> int:
-    """Return reward amount for completed order based on snapshot requirements."""
+def finish_order_reward(required_clicks_snapshot: int, reward_snapshot_mul: float) -> int:
+    """Return reward amount for completed order based on snapshot multipliers."""
 
-    return base_reward_from_required(required_clicks_snapshot, reward_mul_total)
+    mul = max(1.0, reward_snapshot_mul)
+    return base_reward_from_required(required_clicks_snapshot, mul)
 
 
 async def ensure_no_active_order(session: AsyncSession, user: User) -> bool:
@@ -734,7 +800,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 tg_id = event.from_user.id
                 limit = await self.limit_getter(tg_id)
                 if not self.limiter.allow(tg_id, limit):
-                    logger.debug("Rate limit hit for user %s", tg_id)
+                    logger.debug("Rate limit hit", extra={"tg_id": tg_id, "limit": limit})
                     await event.answer(RU.TOO_FAST)
                     return
         except Exception as e:
@@ -745,19 +811,13 @@ class RateLimitMiddleware(BaseMiddleware):
 async def get_user_click_limit(tg_id: int) -> int:
     """Базовый лимит 10/сек + бонус от экипировки стула (до 15)."""
 
-    limit = 10
     async with session_scope() as session:
-        user_id = await session.scalar(select(User.id).where(User.tg_id == tg_id))
-        if user_id is None:
-            return limit
-        bonus = await session.scalar(
-            select(Item.bonus_value)
-            .join(UserEquipment, UserEquipment.item_id == Item.id)
-            .where(UserEquipment.user_id == user_id, Item.slot == "chair")
-        )
-        if bonus is not None:
-            limit = min(15, limit + int(bonus))
-    return limit
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            return BASE_CLICK_LIMIT
+        stats = await get_user_stats(session, user)
+        limit = BASE_CLICK_LIMIT + int(stats.get("ratelimit_plus", 0))
+    return max(1, min(MAX_CLICK_LIMIT, limit))
 
 
 # ----------------------------------------------------------------------------
@@ -819,13 +879,20 @@ async def get_or_create_user(tg_id: int, first_name: str) -> User:
                 updated_at=now,
             )
             session.add(user)
-            await session.flush()
+            try:
+                await session.flush()
+            except IntegrityError:
+                await session.rollback()
+                logger.warning(
+                    "Race while creating user", extra={"tg_id": tg_id}
+                )
+                return await get_or_create_user(tg_id, first_name)
             for slot in ["laptop", "phone", "tablet", "monitor", "chair"]:
                 session.add(UserEquipment(user_id=user.id, slot=slot, item_id=None))
-            logger.info("New user created: tg_id=%s", tg_id)
+            logger.info("New user created", extra={"tg_id": tg_id, "user_id": user.id})
         else:
             await apply_offline_income(session, user)
-            logger.debug("Existing user resumed session: tg_id=%s", tg_id)
+            logger.debug("Existing user resumed session", extra={"tg_id": tg_id})
         return user
 
 
@@ -849,7 +916,7 @@ async def ensure_user_loaded(session: AsyncSession, message: Message) -> Optiona
 @safe_handler
 async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id, message.from_user.first_name or "")
-    logger.info("User %s issued /start (db id=%s)", message.from_user.id, user.id)
+    logger.info("User issued /start", extra={"tg_id": message.from_user.id, "user_id": user.id})
     await message.answer(RU.WELCOME, reply_markup=kb_main_menu())
 
 
@@ -887,7 +954,7 @@ async def handle_click(message: Message):
                 RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct)
             )
         if active.progress_clicks >= active.required_clicks:
-            reward = finish_order_reward(active.required_clicks, stats["reward_mul_total"])
+            reward = finish_order_reward(active.required_clicks, active.reward_snapshot_mul)
             xp_gain = int(round(active.required_clicks * 0.1))
             now = utcnow()
             user.balance += reward
@@ -903,7 +970,15 @@ async def handle_click(message: Message):
                     created_at=now,
                 )
             )
-            logger.info("Order finished by user %s (order_id=%s, reward=%s)", user.tg_id, active.order_id, reward)
+            logger.info(
+                "Order finished",
+                extra={
+                    "tg_id": user.tg_id,
+                    "user_id": user.id,
+                    "order_id": active.order_id,
+                    "reward": reward,
+                },
+            )
             await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain))
 
 
@@ -932,7 +1007,11 @@ async def _render_orders_page(message: Message, state: FSMContext):
             return
         await apply_offline_income(session, user)
         all_orders = (
-            await session.execute(select(Order).where(Order.min_level <= user.level))
+            await session.execute(
+                select(Order)
+                .where(Order.min_level <= user.level)
+                .order_by(Order.min_level, Order.id)
+            )
         ).scalars().all()
         data = await state.get_data()
         page = int(data.get("page", 0))
@@ -1021,7 +1100,10 @@ async def take_order(message: Message, state: FSMContext):
         order = await session.scalar(select(Order).where(Order.id == order_id))
         if order:
             await message.answer(RU.ORDER_TAKEN.format(title=order.title), reply_markup=kb_menu_only())
-        logger.info("User %s took order %s", user.tg_id, order_id)
+        logger.info(
+            "Order taken",
+            extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": order_id},
+        )
     await state.clear()
 
 
@@ -1052,7 +1134,9 @@ async def render_boosts(message: Message, state: FSMContext):
             await state.clear()
             return
         await apply_offline_income(session, user)
-        boosts = (await session.execute(select(Boost))).scalars().all()
+        boosts = (
+            await session.execute(select(Boost).order_by(Boost.id))
+        ).scalars().all()
         levels = {
             b_id: lvl
             for b_id, lvl in (
@@ -1164,7 +1248,15 @@ async def shop_buy_boost(message: Message, state: FSMContext):
                     created_at=now,
                 )
             )
-            logger.info("User %s upgraded boost %s to level %s", user.tg_id, boost.code, lvl_next)
+            logger.info(
+                "Boost upgraded",
+                extra={
+                    "tg_id": user.tg_id,
+                    "user_id": user.id,
+                    "boost": boost.code,
+                    "level": lvl_next,
+                },
+            )
             await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
     await state.clear()
 
@@ -1195,7 +1287,11 @@ async def render_items(message: Message, state: FSMContext):
             return
         await apply_offline_income(session, user)
         items = (
-            await session.execute(select(Item).where(Item.min_level <= user.level))
+            await session.execute(
+                select(Item)
+                .where(Item.min_level <= user.level)
+                .order_by(Item.slot, Item.tier)
+            )
         ).scalars().all()
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(items, page, 5)
@@ -1287,7 +1383,10 @@ async def shop_buy_item(message: Message, state: FSMContext):
                     created_at=now,
                 )
             )
-            logger.info("User %s bought item %s", user.tg_id, item.code)
+            logger.info(
+                "Item purchased",
+                extra={"tg_id": user.tg_id, "user_id": user.id, "item": item.code},
+            )
             await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
     await state.clear()
 
@@ -1317,7 +1416,9 @@ async def render_team(message: Message, state: FSMContext):
             await state.clear()
             return
         await apply_offline_income(session, user)
-        members = (await session.execute(select(TeamMember))).scalars().all()
+        members = (
+            await session.execute(select(TeamMember).order_by(TeamMember.base_cost, TeamMember.id))
+        ).scalars().all()
         levels = {
             mid: lvl
             for mid, lvl in (
@@ -1417,7 +1518,15 @@ async def team_upgrade(message: Message, state: FSMContext):
                     created_at=now,
                 )
             )
-            logger.info("User %s upgraded team member %s to level %s", user.tg_id, member.code, lvl + 1)
+            logger.info(
+                "Team upgraded",
+                extra={
+                    "tg_id": user.tg_id,
+                    "user_id": user.id,
+                    "member": member.code,
+                    "level": lvl + 1,
+                },
+            )
             await message.answer(RU.UPGRADE_OK, reply_markup=kb_menu_only())
     await state.clear()
 
@@ -1452,6 +1561,7 @@ async def render_inventory(message: Message, state: FSMContext):
                 select(Item)
                 .join(UserItem, UserItem.item_id == Item.id)
                 .where(UserItem.user_id == user.id)
+                .order_by(Item.slot, Item.tier)
             )
         ).scalars().all()
         page = int((await state.get_data()).get("page", 0))
@@ -1535,7 +1645,10 @@ async def wardrobe_equip(message: Message, state: FSMContext):
             else:
                 eq.item_id = item.id
             user.updated_at = now
-            logger.info("User %s equipped item %s", user.tg_id, item.code)
+            logger.info(
+                "Item equipped",
+                extra={"tg_id": user.tg_id, "user_id": user.id, "item": item.code},
+            )
             await message.answer(RU.EQUIP_OK, reply_markup=kb_menu_only())
     await state.clear()
 
@@ -1601,7 +1714,7 @@ async def profile_daily(message: Message):
                 created_at=now,
             )
         )
-        logger.info("User %s collected daily bonus", user.tg_id)
+        logger.info("Daily bonus collected", extra={"tg_id": user.tg_id, "user_id": user.id})
         await message.answer(RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB), reply_markup=kb_main_menu())
 
 
@@ -1619,7 +1732,10 @@ async def profile_cancel_order(message: Message, state: FSMContext):
         now = utcnow()
         active.canceled = True
         user.updated_at = now
-        logger.info("User %s cancelled order %s", user.tg_id, active.order_id)
+        logger.info(
+            "Order cancelled",
+            extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": active.order_id},
+        )
         await message.answer(RU.ORDER_CANCELED, reply_markup=kb_main_menu())
 
 
@@ -1645,12 +1761,20 @@ async def main() -> None:
     dp.include_router(router)
 
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info(RU.BOT_STARTED)
+    logger.info("Bot started", extra={"event": "startup"})
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
+    def _run_startup_checks() -> None:
+        """Lightweight assertions to guard critical economic formulas."""
+
+        assert finish_order_reward(100, 1.25) == base_reward_from_required(100, 1.25)
+        assert finish_order_reward(100, 0.0) == base_reward_from_required(100, 1.0)
+
+
+    _run_startup_checks()
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped.")
+        logger.info("Bot stopped", extra={"event": "shutdown"})
