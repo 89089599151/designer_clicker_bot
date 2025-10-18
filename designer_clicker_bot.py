@@ -24,11 +24,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from math import floor
-from typing import Deque, Dict, List, Literal, Optional, Tuple
-from collections import defaultdict, deque
+from typing import AsyncIterator, Deque, Dict, List, Literal, Optional, Tuple
+import time
 
 # --- .env ---
 try:
@@ -225,14 +228,43 @@ def kb_profile_menu(has_active_order: bool) -> ReplyKeyboardMarkup:
 
 
 # ----------------------------------------------------------------------------
+# Обёртка обработчиков
+# ----------------------------------------------------------------------------
+
+ERROR_MESSAGE = "Произошла ошибка. Попробуйте позже."
+
+
+def safe_handler(func):
+    """Обёртка для обработчиков сообщений, чтобы логировать ошибки и отвечать пользователю."""
+
+    @wraps(func)
+    async def wrapper(message: Message, *args, **kwargs):
+        try:
+            return await func(message, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - важно логировать любые сбои
+            logger.exception("Unhandled error in %s", func.__name__, exc_info=exc)
+            if isinstance(message, Message):
+                try:
+                    await message.answer(ERROR_MESSAGE, reply_markup=kb_main_menu())
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to send error notification to user")
+
+    return wrapper
+
+
+# ----------------------------------------------------------------------------
 # Утилиты
 # ----------------------------------------------------------------------------
 
 def utcnow() -> datetime:
+    """Return the current UTC datetime with timezone information."""
+
     return datetime.now(timezone.utc)
 
 
 def slice_page(items: List, page: int, page_size: int = 5) -> Tuple[List, bool, bool]:
+    """Return sublist for pagination along with availability of prev/next pages."""
+
     start = page * page_size
     end = start + page_size
     sub = items[start:end]
@@ -396,8 +428,27 @@ async_session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=
 
 
 async def init_models() -> None:
+    """Create database tables if they do not exist."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncIterator[AsyncSession]:
+    """Provide a transactional scope for database work with automatic commit/rollback."""
+    async with async_session_maker() as session:
+        try:
+            async with session.begin():
+                yield session
+        except Exception:
+            logger.exception("Session rollback due to error.")
+            raise
+
+
+async def prepare_database() -> None:
+    """Ensure that database schema and seed data are initialized exactly once."""
+    async with session_scope() as session:
+        await seed_if_needed(session)
 
 
 # ----------------------------------------------------------------------------
@@ -483,14 +534,6 @@ def xp_to_level(n: int) -> int:
     return 100 * n * n
 
 
-def level_from_xp(xp: int) -> Tuple[int, int]:
-    lvl = 1
-    while xp >= xp_to_level(lvl):
-        xp -= xp_to_level(lvl)
-        lvl += 1
-    return max(1, lvl - 1), xp_to_level(lvl)
-
-
 def upgrade_cost(base: int, growth: float, n: int) -> int:
     return round(base * (growth ** (n - 1)))
 
@@ -504,15 +547,16 @@ def base_reward_from_required(req: int, reward_mul: float = 1.0) -> int:
 
 
 async def get_user_stats(session: AsyncSession, user: User) -> dict:
-    """
-    Возвращает: cp, reward_mul_total, passive_mul_total, req_clicks_pct, ratelimit_plus
-    """
-    # Бусты
-    rows = (await session.execute(
-        select(Boost.type, UserBoost.level, Boost.step_value)
-        .join(Boost, Boost.id == UserBoost.boost_id)
-        .where(UserBoost.user_id == user.id)
-    )).all()
+    """Return aggregated user stats from boosts and equipment."""
+
+    rows = (
+        await session.execute(
+            select(Boost.type, UserBoost.level, Boost.step_value)
+            .select_from(UserBoost)
+            .join(Boost, Boost.id == UserBoost.boost_id)
+            .where(UserBoost.user_id == user.id)
+        )
+    ).all()
     cp_add = 0
     reward_add = 0.0
     passive_add = 0.0
@@ -524,11 +568,13 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
         elif btype == "passive":
             passive_add += lvl * step
     # Экип
-    items = (await session.execute(
-        select(Item.bonus_type, Item.bonus_value)
-        .join(UserEquipment, UserEquipment.item_id == Item.id)
-        .where(UserEquipment.user_id == user.id)
-    )).all()
+    items = (
+        await session.execute(
+            select(Item.bonus_type, Item.bonus_value)
+            .join(UserEquipment, UserEquipment.item_id == Item.id)
+            .where(UserEquipment.user_id == user.id, UserEquipment.item_id.is_not(None))
+        )
+    ).all()
     cp_pct = 0.0
     passive_pct = 0.0
     req_clicks_pct = 0.0
@@ -559,45 +605,69 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
 
 
 def team_income_per_min(base_per_min: float, level: int) -> float:
+    """Calculate per-minute income from a team member for the given level."""
+
     if level <= 0:
         return 0.0
     return base_per_min * (1 + 0.25 * (level - 1))
 
 
 async def calc_passive_income_rate(session: AsyncSession, user: User, passive_mul_total: float) -> float:
-    rows = (await session.execute(
-        select(TeamMember.base_income_per_min, UserTeam.level)
-        .join(UserTeam, TeamMember.id == UserTeam.member_id)
-        .where(UserTeam.user_id == user.id)
-    )).all()
+    """Return passive income in currency per second accounting for multipliers."""
+
+    rows = (
+        await session.execute(
+            select(TeamMember.base_income_per_min, UserTeam.level)
+            .join(UserTeam, TeamMember.id == UserTeam.member_id)
+            .where(UserTeam.user_id == user.id)
+        )
+    ).all()
     per_min = sum(team_income_per_min(b, lvl) for b, lvl in rows)
     return (per_min / 60.0) * passive_mul_total
 
 
 async def apply_offline_income(session: AsyncSession, user: User) -> int:
+    """Apply passive income accumulated since the last interaction."""
+
     now = utcnow()
     delta = max(0.0, (now - user.last_seen).total_seconds())
     user.last_seen = now
+    user.updated_at = now
     stats = await get_user_stats(session, user)
     rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
     amount = int(rate * delta)
     if amount > 0:
         user.balance += amount
-        session.add(EconomyLog(user_id=user.id, type="passive", amount=amount, meta={"sec": int(delta)}, created_at=now))
+        session.add(
+            EconomyLog(
+                user_id=user.id,
+                type="passive",
+                amount=amount,
+                meta={"sec": int(delta)},
+                created_at=now,
+            )
+        )
+        logger.debug("Offline income for user %s: +%s", user.tg_id, amount)
     return amount
 
 
 def snapshot_required_clicks(order: Order, user_level: int, req_clicks_pct: float) -> int:
+    """Calculate the effective clicks required for an order based on user stats."""
+
     base_req = required_clicks(order.base_clicks, user_level)
     reduced = int(round(base_req * (1 - req_clicks_pct)))
     return max(1, reduced)
 
 
 def finish_order_reward(required_clicks_snapshot: int, reward_mul_total: float) -> int:
+    """Return reward amount for completed order based on snapshot requirements."""
+
     return base_reward_from_required(required_clicks_snapshot, reward_mul_total)
 
 
 async def ensure_no_active_order(session: AsyncSession, user: User) -> bool:
+    """Check that user does not have unfinished order."""
+
     stmt = select(UserOrder).where(
         UserOrder.user_id == user.id,
         UserOrder.finished.is_(False),
@@ -607,6 +677,8 @@ async def ensure_no_active_order(session: AsyncSession, user: User) -> bool:
 
 
 async def get_active_order(session: AsyncSession, user: User) -> Optional[UserOrder]:
+    """Return current active order for user if any."""
+
     stmt = select(UserOrder).where(
         UserOrder.user_id == user.id,
         UserOrder.finished.is_(False),
@@ -616,6 +688,8 @@ async def get_active_order(session: AsyncSession, user: User) -> Optional[UserOr
 
 
 async def add_xp_and_levelup(user: User, xp_gain: int) -> None:
+    """Apply XP gain to user and increment level when threshold reached."""
+
     user.xp += xp_gain
     lvl = user.level
     while user.xp >= xp_to_level(lvl):
@@ -629,11 +703,14 @@ async def add_xp_and_levelup(user: User, xp_gain: int) -> None:
 # ----------------------------------------------------------------------------
 
 class RateLimiter:
-    def __init__(self):
+    """Sliding-window rate limiter per Telegram user."""
+
+    def __init__(self) -> None:
         self._events: Dict[int, Deque[float]] = defaultdict(lambda: deque(maxlen=100))
 
     def allow(self, user_id: int, limit_per_sec: int, now: Optional[float] = None) -> bool:
-        import time
+        """Return True if event allowed under given rate, False otherwise."""
+
         t = time.monotonic() if now is None else now
         dq = self._events[user_id]
         while dq and t - dq[0] > 1.0:
@@ -657,6 +734,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 tg_id = event.from_user.id
                 limit = await self.limit_getter(tg_id)
                 if not self.limiter.allow(tg_id, limit):
+                    logger.debug("Rate limit hit for user %s", tg_id)
                     await event.answer(RU.TOO_FAST)
                     return
         except Exception as e:
@@ -665,23 +743,18 @@ class RateLimitMiddleware(BaseMiddleware):
 
 
 async def get_user_click_limit(tg_id: int) -> int:
-    """Базовый лимит 10/сек + бонус от стула (до 15)."""
+    """Базовый лимит 10/сек + бонус от экипировки стула (до 15)."""
+
     limit = 10
-    async with async_session_maker() as session:
-        from sqlalchemy import and_
-        from sqlalchemy.orm import aliased
-        # Найдём user.id по tg_id
-        from sqlalchemy import select as _select
-        user_row = await session.execute(_select(User.id).where(User.tg_id == tg_id))
-        db_user_id = user_row.scalar_one_or_none()
-        if db_user_id is None:
+    async with session_scope() as session:
+        user_id = await session.scalar(select(User.id).where(User.tg_id == tg_id))
+        if user_id is None:
             return limit
-        row = await session.execute(
+        bonus = await session.scalar(
             select(Item.bonus_value)
             .join(UserEquipment, UserEquipment.item_id == Item.id)
-            .where(and_(UserEquipment.user_id == db_user_id, Item.slot == "chair"))
+            .where(UserEquipment.user_id == user_id, Item.slot == "chair")
         )
-        bonus = row.scalar_one_or_none()
         if bonus is not None:
             limit = min(15, limit + int(bonus))
     return limit
@@ -726,81 +799,112 @@ router = Router()
 
 
 async def get_or_create_user(tg_id: int, first_name: str) -> User:
-    async with async_session_maker() as session:
-        async with session.begin():
-            await seed_if_needed(session)
-            user = await session.scalar(select(User).where(User.tg_id == tg_id))
-            if not user:
-                now = utcnow()
-                user = User(
-                    tg_id=tg_id,
-                    first_name=first_name or "",
-                    balance=200,
-                    cp_base=1,
-                    reward_mul=0.0,
-                    passive_mul=0.0,
-                    level=1,
-                    xp=0,
-                    last_seen=now,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(user)
-                await session.flush()
-                # Инициализируем пустые слоты
-                for slot in ["laptop", "phone", "tablet", "monitor", "chair"]:
-                    session.add(UserEquipment(user_id=user.id, slot=slot, item_id=None))
-            else:
-                await apply_offline_income(session, user)
+    """Fetch existing user or create a new record."""
+
+    async with session_scope() as session:
+        user = await session.scalar(select(User).where(User.tg_id == tg_id))
+        if not user:
+            now = utcnow()
+            user = User(
+                tg_id=tg_id,
+                first_name=first_name or "",
+                balance=200,
+                cp_base=1,
+                reward_mul=0.0,
+                passive_mul=0.0,
+                level=1,
+                xp=0,
+                last_seen=now,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(user)
+            await session.flush()
+            for slot in ["laptop", "phone", "tablet", "monitor", "chair"]:
+                session.add(UserEquipment(user_id=user.id, slot=slot, item_id=None))
+            logger.info("New user created: tg_id=%s", tg_id)
+        else:
+            await apply_offline_income(session, user)
+            logger.debug("Existing user resumed session: tg_id=%s", tg_id)
         return user
 
 
+async def get_user_by_tg(session: AsyncSession, tg_id: int) -> Optional[User]:
+    """Load user entity by Telegram identifier."""
+
+    return await session.scalar(select(User).where(User.tg_id == tg_id))
+
+
+async def ensure_user_loaded(session: AsyncSession, message: Message) -> Optional[User]:
+    """Return user for message or notify user to start the bot."""
+
+    user = await get_user_by_tg(session, message.from_user.id)
+    if not user:
+        await message.answer("Нажмите /start", reply_markup=kb_main_menu())
+        return None
+    return user
+
+
 @router.message(CommandStart())
+@safe_handler
 async def cmd_start(message: Message):
     user = await get_or_create_user(message.from_user.id, message.from_user.first_name or "")
+    logger.info("User %s issued /start (db id=%s)", message.from_user.id, user.id)
     await message.answer(RU.WELCOME, reply_markup=kb_main_menu())
 
 
 @router.message(F.text == RU.BTN_MENU)
+@safe_handler
 async def back_to_menu(message: Message):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if user:
-                await apply_offline_income(session, user)
+    async with session_scope() as session:
+        user = await get_user_by_tg(session, message.from_user.id)
+        if user:
+            await apply_offline_income(session, user)
     await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
 
 
 # --- Клик ---
 
 @router.message(F.text == RU.BTN_CLICK)
+@safe_handler
 async def handle_click(message: Message):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if not user:
-                await message.answer(RU.NO_ACTIVE_ORDER)
-                return
-            await apply_offline_income(session, user)
-            active = await get_active_order(session, user)
-            if not active:
-                await message.answer(RU.NO_ACTIVE_ORDER)
-                return
-            stats = await get_user_stats(session, user)
-            cp = stats["cp"]
-            prev = active.progress_clicks
-            active.progress_clicks = min(active.required_clicks, active.progress_clicks + cp)
-            if (active.progress_clicks // 10) > (prev // 10) or active.progress_clicks == active.required_clicks:
-                pct = int(100 * active.progress_clicks / active.required_clicks)
-                await message.answer(RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct))
-            if active.progress_clicks >= active.required_clicks:
-                reward = finish_order_reward(active.required_clicks, stats["reward_mul_total"])
-                xp_gain = int(round(active.required_clicks * 0.1))
-                user.balance += reward
-                await add_xp_and_levelup(user, xp_gain)
-                active.finished = True
-                session.add(EconomyLog(user_id=user.id, type="order_finish", amount=reward, meta={"order_id": active.order_id}, created_at=utcnow()))
-                await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        await apply_offline_income(session, user)
+        active = await get_active_order(session, user)
+        if not active:
+            await message.answer(RU.NO_ACTIVE_ORDER)
+            return
+        stats = await get_user_stats(session, user)
+        cp = stats["cp"]
+        prev = active.progress_clicks
+        active.progress_clicks = min(active.required_clicks, active.progress_clicks + cp)
+        if (active.progress_clicks // 10) > (prev // 10) or active.progress_clicks == active.required_clicks:
+            pct = int(100 * active.progress_clicks / active.required_clicks)
+            await message.answer(
+                RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct)
+            )
+        if active.progress_clicks >= active.required_clicks:
+            reward = finish_order_reward(active.required_clicks, stats["reward_mul_total"])
+            xp_gain = int(round(active.required_clicks * 0.1))
+            now = utcnow()
+            user.balance += reward
+            await add_xp_and_levelup(user, xp_gain)
+            user.updated_at = now
+            active.finished = True
+            session.add(
+                EconomyLog(
+                    user_id=user.id,
+                    type="order_finish",
+                    amount=reward,
+                    meta={"order_id": active.order_id},
+                    created_at=now,
+                )
+            )
+            logger.info("Order finished by user %s (order_id=%s, reward=%s)", user.tg_id, active.order_id, reward)
+            await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain))
 
 
 # --- Заказы ---
@@ -813,6 +917,7 @@ def fmt_orders(orders: List[Order]) -> str:
 
 
 @router.message(F.text == RU.BTN_ORDERS)
+@safe_handler
 async def orders_root(message: Message, state: FSMContext):
     await state.set_state(OrdersState.browsing)
     await state.update_data(page=0)
@@ -820,19 +925,24 @@ async def orders_root(message: Message, state: FSMContext):
 
 
 async def _render_orders_page(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            await apply_offline_income(session, user)
-            all_orders = (await session.execute(select(Order).where(Order.min_level <= user.level))).scalars().all()
-            data = await state.get_data()
-            page = int(data.get("page", 0))
-            sub, has_prev, has_next = slice_page(all_orders, page, 5)
-            await message.answer(fmt_orders(sub), reply_markup=kb_numeric_page(has_prev, has_next))
-            await state.update_data(order_ids=[o.id for o in sub], page=page)
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        await apply_offline_income(session, user)
+        all_orders = (
+            await session.execute(select(Order).where(Order.min_level <= user.level))
+        ).scalars().all()
+        data = await state.get_data()
+        page = int(data.get("page", 0))
+        sub, has_prev, has_next = slice_page(all_orders, page, 5)
+        await message.answer(fmt_orders(sub), reply_markup=kb_numeric_page(has_prev, has_next))
+        await state.update_data(order_ids=[o.id for o in sub], page=page)
 
 
 @router.message(OrdersState.browsing, F.text.in_({"1", "2", "3", "4", "5"}))
+@safe_handler
 async def choose_order(message: Message, state: FSMContext):
     data = await state.get_data()
     ids = data.get("order_ids", [])
@@ -840,21 +950,29 @@ async def choose_order(message: Message, state: FSMContext):
     if idx < 0 or idx >= len(ids):
         return
     order_id = ids[idx]
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if not await ensure_no_active_order(session, user):
-                await message.answer(RU.ORDER_ALREADY)
-                return
-            order = await session.scalar(select(Order).where(Order.id == order_id))
-            stats = await get_user_stats(session, user)
-            req = snapshot_required_clicks(order, user.level, stats["req_clicks_pct"])
-            await state.set_state(OrdersState.confirm)
-            await state.update_data(order_id=order_id, req=req)
-            await message.answer(f"Взять заказ «{order.title}»?\nТребуемые клики: {req}", reply_markup=kb_confirm(RU.BTN_TAKE))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        if not await ensure_no_active_order(session, user):
+            await message.answer(RU.ORDER_ALREADY)
+            return
+        order = await session.scalar(select(Order).where(Order.id == order_id))
+        if not order:
+            await message.answer("Заказ не найден.", reply_markup=kb_menu_only())
+            return
+        stats = await get_user_stats(session, user)
+        req = snapshot_required_clicks(order, user.level, stats["req_clicks_pct"])
+        await state.set_state(OrdersState.confirm)
+        await state.update_data(order_id=order_id, req=req)
+        await message.answer(
+            f"Взять заказ «{order.title}»?\nТребуемые клики: {req}", reply_markup=kb_confirm(RU.BTN_TAKE)
+        )
 
 
 @router.message(OrdersState.browsing, F.text == RU.BTN_PREV)
+@safe_handler
 async def orders_prev(message: Message, state: FSMContext):
     data = await state.get_data()
     page = max(0, int(data.get("page", 0)) - 1)
@@ -863,6 +981,7 @@ async def orders_prev(message: Message, state: FSMContext):
 
 
 @router.message(OrdersState.browsing, F.text == RU.BTN_NEXT)
+@safe_handler
 async def orders_next(message: Message, state: FSMContext):
     data = await state.get_data()
     page = int(data.get("page", 0)) + 1
@@ -871,27 +990,43 @@ async def orders_next(message: Message, state: FSMContext):
 
 
 @router.message(OrdersState.confirm, F.text == RU.BTN_TAKE)
+@safe_handler
 async def take_order(message: Message, state: FSMContext):
     data = await state.get_data()
     order_id = int(data["order_id"])
     req = int(data["req"])
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if not await ensure_no_active_order(session, user):
-                await message.answer(RU.ORDER_ALREADY)
-                await state.clear()
-                return
-            session.add(UserOrder(
-                user_id=user.id, order_id=order_id, progress_clicks=0, required_clicks=req,
-                started_at=utcnow(), finished=False, canceled=False, reward_snapshot_mul=(await get_user_stats(session, user))["reward_mul_total"]
-            ))
-            order = await session.scalar(select(Order).where(Order.id == order_id))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        if not await ensure_no_active_order(session, user):
+            await message.answer(RU.ORDER_ALREADY)
+            await state.clear()
+            return
+        stats = await get_user_stats(session, user)
+        session.add(
+            UserOrder(
+                user_id=user.id,
+                order_id=order_id,
+                progress_clicks=0,
+                required_clicks=req,
+                started_at=utcnow(),
+                finished=False,
+                canceled=False,
+                reward_snapshot_mul=stats["reward_mul_total"],
+            )
+        )
+        user.updated_at = utcnow()
+        order = await session.scalar(select(Order).where(Order.id == order_id))
+        if order:
             await message.answer(RU.ORDER_TAKEN.format(title=order.title), reply_markup=kb_menu_only())
+        logger.info("User %s took order %s", user.tg_id, order_id)
     await state.clear()
 
 
 @router.message(OrdersState.confirm, F.text == RU.BTN_CANCEL)
+@safe_handler
 async def take_cancel(message: Message, state: FSMContext):
     await state.clear()
     await orders_root(message, state)
@@ -900,6 +1035,7 @@ async def take_cancel(message: Message, state: FSMContext):
 # --- Магазин ---
 
 @router.message(F.text == RU.BTN_SHOP)
+@safe_handler
 async def shop_root(message: Message, state: FSMContext):
     await state.set_state(ShopState.root)
     await message.answer(RU.SHOP_HEADER, reply_markup=kb_shop_menu())
@@ -910,26 +1046,34 @@ def fmt_boosts(lines: List[str]) -> str:
 
 
 async def render_boosts(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            await apply_offline_income(session, user)
-            boosts = (await session.execute(select(Boost))).scalars().all()
-            levels = {b_id: lvl for b_id, lvl in (await session.execute(
-                select(UserBoost.boost_id, UserBoost.level).where(UserBoost.user_id == user.id)
-            )).all()}
-            page = int((await state.get_data()).get("page", 0))
-            sub, has_prev, has_next = slice_page(boosts, page, 5)
-            lines = []
-            for i, b in enumerate(sub, 1):
-                lvl_next = levels.get(b.id, 0) + 1
-                cost = upgrade_cost(b.base_cost, b.growth, lvl_next)
-                lines.append(f"[{i}] {b.name} — ур. след. {lvl_next}, {cost} {RU.CURRENCY}")
-            await message.answer(fmt_boosts(lines), reply_markup=kb_numeric_page(has_prev, has_next))
-            await state.update_data(boost_ids=[b.id for b in sub], page=page)
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        await apply_offline_income(session, user)
+        boosts = (await session.execute(select(Boost))).scalars().all()
+        levels = {
+            b_id: lvl
+            for b_id, lvl in (
+                await session.execute(
+                    select(UserBoost.boost_id, UserBoost.level).where(UserBoost.user_id == user.id)
+                )
+            ).all()
+        }
+        page = int((await state.get_data()).get("page", 0))
+        sub, has_prev, has_next = slice_page(boosts, page, 5)
+        lines = []
+        for i, b in enumerate(sub, 1):
+            lvl_next = levels.get(b.id, 0) + 1
+            cost = upgrade_cost(b.base_cost, b.growth, lvl_next)
+            lines.append(f"[{i}] {b.name} — ур. след. {lvl_next}, {cost} {RU.CURRENCY}")
+        await message.answer(fmt_boosts(lines), reply_markup=kb_numeric_page(has_prev, has_next))
+        await state.update_data(boost_ids=[b.id for b in sub], page=page)
 
 
 @router.message(ShopState.root, F.text == RU.BTN_BOOSTS)
+@safe_handler
 async def shop_boosts(message: Message, state: FSMContext):
     await state.set_state(ShopState.boosts)
     await state.update_data(page=0)
@@ -937,21 +1081,37 @@ async def shop_boosts(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.boosts, F.text.in_({"1", "2", "3", "4", "5"}))
+@safe_handler
 async def shop_choose_boost(message: Message, state: FSMContext):
     ids = (await state.get_data()).get("boost_ids", [])
     idx = int(message.text) - 1
     if idx < 0 or idx >= len(ids):
         return
     bid = ids[idx]
-    async with async_session_maker() as session:
-        async with session.begin():
-            b = await session.scalar(select(Boost).where(Boost.id == bid))
-            await message.answer(f"Купить буст «{b.name}»?", reply_markup=kb_confirm(RU.BTN_BUY))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        boost = await session.scalar(select(Boost).where(Boost.id == bid))
+        if not boost:
+            await message.answer("Буст не найден.", reply_markup=kb_menu_only())
+            return
+        user_boost = await session.scalar(
+            select(UserBoost).where(UserBoost.user_id == user.id, UserBoost.boost_id == bid)
+        )
+        lvl_next = (user_boost.level if user_boost else 0) + 1
+        cost = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
+        await message.answer(
+            f"Купить буст «{boost.name}» (ур. след. {lvl_next}) за {cost} {RU.CURRENCY}?",
+            reply_markup=kb_confirm(RU.BTN_BUY),
+        )
     await state.set_state(ShopState.confirm_boost)
     await state.update_data(boost_id=bid)
 
 
 @router.message(ShopState.boosts, F.text == RU.BTN_PREV)
+@safe_handler
 async def shop_boosts_prev(message: Message, state: FSMContext):
     page = max(0, int((await state.get_data()).get("page", 0)) - 1)
     await state.update_data(page=page)
@@ -959,6 +1119,7 @@ async def shop_boosts_prev(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.boosts, F.text == RU.BTN_NEXT)
+@safe_handler
 async def shop_boosts_next(message: Message, state: FSMContext):
     page = int((await state.get_data()).get("page", 0)) + 1
     await state.update_data(page=page)
@@ -966,26 +1127,53 @@ async def shop_boosts_next(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.confirm_boost, F.text == RU.BTN_BUY)
+@safe_handler
 async def shop_buy_boost(message: Message, state: FSMContext):
     bid = int((await state.get_data())["boost_id"])
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            b = await session.scalar(select(Boost).where(Boost.id == bid))
-            ub = await session.scalar(select(UserBoost).where(UserBoost.user_id == user.id, UserBoost.boost_id == bid))
-            lvl_next = (0 if not ub else ub.level) + 1
-            cost = upgrade_cost(b.base_cost, b.growth, lvl_next)
-            if user.balance < cost:
-                await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        boost = await session.scalar(select(Boost).where(Boost.id == bid))
+        if not boost:
+            await message.answer("Буст не найден.", reply_markup=kb_menu_only())
+            await state.clear()
+            return
+        user_boost = await session.scalar(
+            select(UserBoost).where(UserBoost.user_id == user.id, UserBoost.boost_id == bid)
+        )
+        lvl_next = (user_boost.level if user_boost else 0) + 1
+        cost = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
+        if user.balance < cost:
+            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+        else:
+            now = utcnow()
+            user.balance -= cost
+            user.updated_at = now
+            if not user_boost:
+                session.add(UserBoost(user_id=user.id, boost_id=bid, level=1))
             else:
-                user.balance -= cost
-                if not ub:
-                    session.add(UserBoost(user_id=user.id, boost_id=bid, level=1))
-                else:
-                    ub.level += 1
-                session.add(EconomyLog(user_id=user.id, type="buy_boost", amount=-cost, meta={"boost": b.code, "lvl": (lvl_next)}, created_at=utcnow()))
-                await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
+                user_boost.level += 1
+            session.add(
+                EconomyLog(
+                    user_id=user.id,
+                    type="buy_boost",
+                    amount=-cost,
+                    meta={"boost": boost.code, "lvl": lvl_next},
+                    created_at=now,
+                )
+            )
+            logger.info("User %s upgraded boost %s to level %s", user.tg_id, boost.code, lvl_next)
+            await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
     await state.clear()
+
+
+@router.message(ShopState.confirm_boost, F.text == RU.BTN_CANCEL)
+@safe_handler
+async def shop_cancel_boost(message: Message, state: FSMContext):
+    await state.set_state(ShopState.boosts)
+    await render_boosts(message, state)
 
 
 # --- Магазин: экипировка ---
@@ -1000,18 +1188,23 @@ def fmt_items(items: List[Item]) -> str:
 
 
 async def render_items(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            await apply_offline_income(session, user)
-            items = (await session.execute(select(Item).where(Item.min_level <= user.level))).scalars().all()
-            page = int((await state.get_data()).get("page", 0))
-            sub, has_prev, has_next = slice_page(items, page, 5)
-            await message.answer(fmt_items(sub), reply_markup=kb_numeric_page(has_prev, has_next))
-            await state.update_data(item_ids=[it.id for it in sub], page=page)
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        await apply_offline_income(session, user)
+        items = (
+            await session.execute(select(Item).where(Item.min_level <= user.level))
+        ).scalars().all()
+        page = int((await state.get_data()).get("page", 0))
+        sub, has_prev, has_next = slice_page(items, page, 5)
+        await message.answer(fmt_items(sub), reply_markup=kb_numeric_page(has_prev, has_next))
+        await state.update_data(item_ids=[it.id for it in sub], page=page)
 
 
 @router.message(ShopState.root, F.text == RU.BTN_EQUIPMENT)
+@safe_handler
 async def shop_equipment(message: Message, state: FSMContext):
     await state.set_state(ShopState.equipment)
     await state.update_data(page=0)
@@ -1019,21 +1212,32 @@ async def shop_equipment(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.equipment, F.text.in_({"1", "2", "3", "4", "5"}))
+@safe_handler
 async def shop_choose_item(message: Message, state: FSMContext):
     item_ids = (await state.get_data()).get("item_ids", [])
     idx = int(message.text) - 1
     if idx < 0 or idx >= len(item_ids):
         return
     item_id = item_ids[idx]
-    async with async_session_maker() as session:
-        async with session.begin():
-            it = await session.scalar(select(Item).where(Item.id == item_id))
-            await message.answer(f"Купить предмет «{it.name}» за {it.price} {RU.CURRENCY}?", reply_markup=kb_confirm(RU.BTN_BUY))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        it = await session.scalar(select(Item).where(Item.id == item_id))
+        if not it:
+            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            return
+        await message.answer(
+            f"Купить предмет «{it.name}» за {it.price} {RU.CURRENCY}?",
+            reply_markup=kb_confirm(RU.BTN_BUY),
+        )
     await state.set_state(ShopState.confirm_item)
     await state.update_data(item_id=item_id)
 
 
 @router.message(ShopState.equipment, F.text == RU.BTN_PREV)
+@safe_handler
 async def shop_items_prev(message: Message, state: FSMContext):
     page = max(0, int((await state.get_data()).get("page", 0)) - 1)
     await state.update_data(page=page)
@@ -1041,6 +1245,7 @@ async def shop_items_prev(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.equipment, F.text == RU.BTN_NEXT)
+@safe_handler
 async def shop_items_next(message: Message, state: FSMContext):
     page = int((await state.get_data()).get("page", 0)) + 1
     await state.update_data(page=page)
@@ -1048,23 +1253,50 @@ async def shop_items_next(message: Message, state: FSMContext):
 
 
 @router.message(ShopState.confirm_item, F.text == RU.BTN_BUY)
+@safe_handler
 async def shop_buy_item(message: Message, state: FSMContext):
     item_id = int((await state.get_data())["item_id"])
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            it = await session.scalar(select(Item).where(Item.id == item_id))
-            has = await session.scalar(select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id))
-            if has:
-                await message.answer("Уже куплено.", reply_markup=kb_menu_only())
-            elif user.balance < it.price:
-                await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
-            else:
-                user.balance -= it.price
-                session.add(UserItem(user_id=user.id, item_id=item_id))
-                session.add(EconomyLog(user_id=user.id, type="buy_item", amount=-it.price, meta={"item": it.code}, created_at=utcnow()))
-                await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        item = await session.scalar(select(Item).where(Item.id == item_id))
+        if not item:
+            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            await state.clear()
+            return
+        has = await session.scalar(
+            select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id)
+        )
+        if has:
+            await message.answer("Уже куплено.", reply_markup=kb_menu_only())
+        elif user.balance < item.price:
+            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+        else:
+            now = utcnow()
+            user.balance -= item.price
+            user.updated_at = now
+            session.add(UserItem(user_id=user.id, item_id=item_id))
+            session.add(
+                EconomyLog(
+                    user_id=user.id,
+                    type="buy_item",
+                    amount=-item.price,
+                    meta={"item": item.code},
+                    created_at=now,
+                )
+            )
+            logger.info("User %s bought item %s", user.tg_id, item.code)
+            await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
     await state.clear()
+
+
+@router.message(ShopState.confirm_item, F.text == RU.BTN_CANCEL)
+@safe_handler
+async def shop_cancel_item(message: Message, state: FSMContext):
+    await state.set_state(ShopState.equipment)
+    await render_items(message, state)
 
 
 # --- Команда ---
@@ -1073,28 +1305,36 @@ def fmt_team(sub: List[TeamMember], levels: Dict[int, int], costs: Dict[int, int
     lines = [RU.TEAM_HEADER]
     for i, m in enumerate(sub, 1):
         lvl = levels.get(m.id, 0)
-        income = team_income_per_min(m.base_income_per_min, max(1, lvl)) if lvl > 0 else 0.0
+        income = team_income_per_min(m.base_income_per_min, lvl)
         lines.append(f"[{i}] {m.name}: {income:.0f}/мин, ур. {lvl}, цена повышения {costs[m.id]} {RU.CURRENCY}")
     return "\n".join(lines)
 
 
 async def render_team(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            await apply_offline_income(session, user)
-            members = (await session.execute(select(TeamMember))).scalars().all()
-            levels = {mid: lvl for mid, lvl in (await session.execute(
-                select(UserTeam.member_id, UserTeam.level).where(UserTeam.user_id == user.id)
-            )).all()}
-            costs = {m.id: int(round(m.base_cost * (1.22 ** max(0, levels.get(m.id, 0))))) for m in members}
-            page = int((await state.get_data()).get("page", 0))
-            sub, has_prev, has_next = slice_page(members, page, 5)
-            await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
-            await state.update_data(member_ids=[m.id for m in sub], page=page)
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        await apply_offline_income(session, user)
+        members = (await session.execute(select(TeamMember))).scalars().all()
+        levels = {
+            mid: lvl
+            for mid, lvl in (
+                await session.execute(
+                    select(UserTeam.member_id, UserTeam.level).where(UserTeam.user_id == user.id)
+                )
+            ).all()
+        }
+        costs = {m.id: int(round(m.base_cost * (1.22 ** max(0, levels.get(m.id, 0))))) for m in members}
+        page = int((await state.get_data()).get("page", 0))
+        sub, has_prev, has_next = slice_page(members, page, 5)
+        await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
+        await state.update_data(member_ids=[m.id for m in sub], page=page)
 
 
 @router.message(F.text == RU.BTN_TEAM)
+@safe_handler
 async def team_root(message: Message, state: FSMContext):
     await state.set_state(TeamState.browsing)
     await state.update_data(page=0)
@@ -1102,21 +1342,29 @@ async def team_root(message: Message, state: FSMContext):
 
 
 @router.message(TeamState.browsing, F.text.in_({"1", "2", "3", "4", "5"}))
+@safe_handler
 async def team_choose(message: Message, state: FSMContext):
     ids = (await state.get_data()).get("member_ids", [])
     idx = int(message.text) - 1
     if idx < 0 or idx >= len(ids):
         return
     mid = ids[idx]
-    async with async_session_maker() as session:
-        async with session.begin():
-            m = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
-            await message.answer(f"Повысить «{m.name}»?", reply_markup=kb_confirm(RU.BTN_UPGRADE))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        member = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
+        if not member:
+            await message.answer("Сотрудник не найден.", reply_markup=kb_menu_only())
+            return
+        await message.answer(f"Повысить «{member.name}»?", reply_markup=kb_confirm(RU.BTN_UPGRADE))
     await state.set_state(TeamState.confirm)
     await state.update_data(member_id=mid)
 
 
 @router.message(TeamState.browsing, F.text == RU.BTN_PREV)
+@safe_handler
 async def team_prev(message: Message, state: FSMContext):
     page = max(0, int((await state.get_data()).get("page", 0)) - 1)
     await state.update_data(page=page)
@@ -1124,6 +1372,7 @@ async def team_prev(message: Message, state: FSMContext):
 
 
 @router.message(TeamState.browsing, F.text == RU.BTN_NEXT)
+@safe_handler
 async def team_next(message: Message, state: FSMContext):
     page = int((await state.get_data()).get("page", 0)) + 1
     await state.update_data(page=page)
@@ -1131,26 +1380,53 @@ async def team_next(message: Message, state: FSMContext):
 
 
 @router.message(TeamState.confirm, F.text == RU.BTN_UPGRADE)
+@safe_handler
 async def team_upgrade(message: Message, state: FSMContext):
     mid = int((await state.get_data())["member_id"])
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            m = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
-            ut = await session.scalar(select(UserTeam).where(UserTeam.user_id == user.id, UserTeam.member_id == mid))
-            lvl = 0 if not ut else ut.level
-            cost = int(round(m.base_cost * (1.22 ** lvl)))
-            if user.balance < cost:
-                await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        member = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
+        if not member:
+            await message.answer("Сотрудник не найден.", reply_markup=kb_menu_only())
+            await state.clear()
+            return
+        team_entry = await session.scalar(
+            select(UserTeam).where(UserTeam.user_id == user.id, UserTeam.member_id == mid)
+        )
+        lvl = team_entry.level if team_entry else 0
+        cost = int(round(member.base_cost * (1.22 ** lvl)))
+        if user.balance < cost:
+            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+        else:
+            now = utcnow()
+            user.balance -= cost
+            user.updated_at = now
+            if not team_entry:
+                session.add(UserTeam(user_id=user.id, member_id=mid, level=1))
             else:
-                user.balance -= cost
-                if not ut:
-                    session.add(UserTeam(user_id=user.id, member_id=mid, level=1))
-                else:
-                    ut.level += 1
-                session.add(EconomyLog(user_id=user.id, type="team_upgrade", amount=-cost, meta={"member": m.code, "lvl": (lvl+1)}, created_at=utcnow()))
-                await message.answer(RU.UPGRADE_OK, reply_markup=kb_menu_only())
+                team_entry.level += 1
+            session.add(
+                EconomyLog(
+                    user_id=user.id,
+                    type="team_upgrade",
+                    amount=-cost,
+                    meta={"member": member.code, "lvl": lvl + 1},
+                    created_at=now,
+                )
+            )
+            logger.info("User %s upgraded team member %s to level %s", user.tg_id, member.code, lvl + 1)
+            await message.answer(RU.UPGRADE_OK, reply_markup=kb_menu_only())
     await state.clear()
+
+
+@router.message(TeamState.confirm, F.text == RU.BTN_CANCEL)
+@safe_handler
+async def team_upgrade_cancel(message: Message, state: FSMContext):
+    await state.set_state(TeamState.browsing)
+    await render_team(message, state)
 
 
 # --- Гардероб ---
@@ -1165,20 +1441,27 @@ def fmt_inventory(items: List[Item]) -> str:
 
 
 async def render_inventory(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            await apply_offline_income(session, user)
-            items = (await session.execute(
-                select(Item).join(UserItem, UserItem.item_id == Item.id).where(UserItem.user_id == user.id)
-            )).scalars().all()
-            page = int((await state.get_data()).get("page", 0))
-            sub, has_prev, has_next = slice_page(items, page, 5)
-            await message.answer(fmt_inventory(sub), reply_markup=kb_numeric_page(has_prev, has_next))
-            await state.update_data(inv_ids=[it.id for it in sub], page=page)
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        await apply_offline_income(session, user)
+        items = (
+            await session.execute(
+                select(Item)
+                .join(UserItem, UserItem.item_id == Item.id)
+                .where(UserItem.user_id == user.id)
+            )
+        ).scalars().all()
+        page = int((await state.get_data()).get("page", 0))
+        sub, has_prev, has_next = slice_page(items, page, 5)
+        await message.answer(fmt_inventory(sub), reply_markup=kb_numeric_page(has_prev, has_next))
+        await state.update_data(inv_ids=[it.id for it in sub], page=page)
 
 
 @router.message(F.text == RU.BTN_WARDROBE)
+@safe_handler
 async def wardrobe_root(message: Message, state: FSMContext):
     await state.set_state(WardrobeState.browsing)
     await state.update_data(page=0)
@@ -1186,21 +1469,29 @@ async def wardrobe_root(message: Message, state: FSMContext):
 
 
 @router.message(WardrobeState.browsing, F.text.in_({"1", "2", "3", "4", "5"}))
+@safe_handler
 async def wardrobe_choose(message: Message, state: FSMContext):
     ids = (await state.get_data()).get("inv_ids", [])
     idx = int(message.text) - 1
     if idx < 0 or idx >= len(ids):
         return
     item_id = ids[idx]
-    async with async_session_maker() as session:
-        async with session.begin():
-            it = await session.scalar(select(Item).where(Item.id == item_id))
-            await message.answer(f"Экипировать «{it.name}»?", reply_markup=kb_confirm(RU.BTN_EQUIP))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        it = await session.scalar(select(Item).where(Item.id == item_id))
+        if not it:
+            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            return
+        await message.answer(f"Экипировать «{it.name}»?", reply_markup=kb_confirm(RU.BTN_EQUIP))
     await state.set_state(WardrobeState.equip_confirm)
     await state.update_data(item_id=item_id)
 
 
 @router.message(WardrobeState.browsing, F.text == RU.BTN_PREV)
+@safe_handler
 async def wardrobe_prev(message: Message, state: FSMContext):
     page = max(0, int((await state.get_data()).get("page", 0)) - 1)
     await state.update_data(page=page)
@@ -1208,6 +1499,7 @@ async def wardrobe_prev(message: Message, state: FSMContext):
 
 
 @router.message(WardrobeState.browsing, F.text == RU.BTN_NEXT)
+@safe_handler
 async def wardrobe_next(message: Message, state: FSMContext):
     page = int((await state.get_data()).get("page", 0)) + 1
     await state.update_data(page=page)
@@ -1215,80 +1507,120 @@ async def wardrobe_next(message: Message, state: FSMContext):
 
 
 @router.message(WardrobeState.equip_confirm, F.text == RU.BTN_EQUIP)
+@safe_handler
 async def wardrobe_equip(message: Message, state: FSMContext):
     item_id = int((await state.get_data())["item_id"])
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            it = await session.scalar(select(Item).where(Item.id == item_id))
-            has = await session.scalar(select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id))
-            if not has:
-                await message.answer(RU.EQUIP_NOITEM, reply_markup=kb_menu_only())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        item = await session.scalar(select(Item).where(Item.id == item_id))
+        if not item:
+            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            await state.clear()
+            return
+        has = await session.scalar(
+            select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id)
+        )
+        if not has:
+            await message.answer(RU.EQUIP_NOITEM, reply_markup=kb_menu_only())
+        else:
+            now = utcnow()
+            eq = await session.scalar(
+                select(UserEquipment).where(UserEquipment.user_id == user.id, UserEquipment.slot == item.slot)
+            )
+            if not eq:
+                session.add(UserEquipment(user_id=user.id, slot=item.slot, item_id=item.id))
             else:
-                eq = await session.scalar(select(UserEquipment).where(UserEquipment.user_id == user.id, UserEquipment.slot == it.slot))
-                if not eq:
-                    session.add(UserEquipment(user_id=user.id, slot=it.slot, item_id=it.id))
-                else:
-                    eq.item_id = it.id
-                await message.answer(RU.EQUIP_OK, reply_markup=kb_menu_only())
+                eq.item_id = item.id
+            user.updated_at = now
+            logger.info("User %s equipped item %s", user.tg_id, item.code)
+            await message.answer(RU.EQUIP_OK, reply_markup=kb_menu_only())
     await state.clear()
+
+
+@router.message(WardrobeState.equip_confirm, F.text == RU.BTN_CANCEL)
+@safe_handler
+async def wardrobe_equip_cancel(message: Message, state: FSMContext):
+    await state.set_state(WardrobeState.browsing)
+    await render_inventory(message, state)
 
 
 # --- Профиль ---
 
 @router.message(F.text == RU.BTN_PROFILE)
+@safe_handler
 async def profile_show(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if not user:
-                await message.answer("Нажмите /start", reply_markup=kb_main_menu())
-                return
-            await apply_offline_income(session, user)
-            stats = await get_user_stats(session, user)
-            rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
-            active = await get_active_order(session, user)
-            order_str = "нет"
-            if active:
-                ord_row = await session.scalar(select(Order).where(Order.id == active.order_id))
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        await apply_offline_income(session, user)
+        stats = await get_user_stats(session, user)
+        rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
+        active = await get_active_order(session, user)
+        order_str = "нет"
+        if active:
+            ord_row = await session.scalar(select(Order).where(Order.id == active.order_id))
+            if ord_row:
                 order_str = f"{ord_row.title}: {active.progress_clicks}/{active.required_clicks}"
-            xp_need = xp_to_level(user.level)
-            text = RU.PROFILE.format(
-                lvl=user.level, xp=user.xp, xp_need=xp_need, rub=user.balance,
-                cp=stats["cp"], pm=int(rate * 60), order=order_str
-            )
-            await message.answer(text, reply_markup=kb_profile_menu(has_active_order=bool(active)))
+        xp_need = xp_to_level(user.level)
+        text = RU.PROFILE.format(
+            lvl=user.level,
+            xp=user.xp,
+            xp_need=xp_need,
+            rub=user.balance,
+            cp=stats["cp"],
+            pm=int(rate * 60),
+            order=order_str,
+        )
+        await message.answer(text, reply_markup=kb_profile_menu(has_active_order=bool(active)))
 
 
 @router.message(F.text == RU.BTN_DAILY)
+@safe_handler
 async def profile_daily(message: Message):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            if not user:
-                await message.answer("Нажмите /start", reply_markup=kb_main_menu())
-                return
-            now = utcnow()
-            if user.daily_bonus_at and (now - user.daily_bonus_at) < timedelta(hours=24):
-                await message.answer(RU.DAILY_WAIT, reply_markup=kb_main_menu())
-                return
-            user.daily_bonus_at = now
-            user.balance += SETTINGS.DAILY_BONUS_RUB
-            session.add(EconomyLog(user_id=user.id, type="daily_bonus", amount=SETTINGS.DAILY_BONUS_RUB, meta=None, created_at=now))
-            await message.answer(RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB), reply_markup=kb_main_menu())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        now = utcnow()
+        if user.daily_bonus_at and (now - user.daily_bonus_at) < timedelta(hours=24):
+            await message.answer(RU.DAILY_WAIT, reply_markup=kb_main_menu())
+            return
+        user.daily_bonus_at = now
+        user.balance += SETTINGS.DAILY_BONUS_RUB
+        user.updated_at = now
+        session.add(
+            EconomyLog(
+                user_id=user.id,
+                type="daily_bonus",
+                amount=SETTINGS.DAILY_BONUS_RUB,
+                meta=None,
+                created_at=now,
+            )
+        )
+        logger.info("User %s collected daily bonus", user.tg_id)
+        await message.answer(RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB), reply_markup=kb_main_menu())
 
 
 @router.message(F.text == RU.BTN_CANCEL_ORDER)
+@safe_handler
 async def profile_cancel_order(message: Message, state: FSMContext):
-    async with async_session_maker() as session:
-        async with session.begin():
-            user = await session.scalar(select(User).where(User.tg_id == message.from_user.id))
-            active = await get_active_order(session, user)
-            if not active:
-                await message.answer("Нет активного заказа.", reply_markup=kb_main_menu())
-                return
-            active.canceled = True
-            await message.answer(RU.ORDER_CANCELED, reply_markup=kb_main_menu())
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        active = await get_active_order(session, user)
+        if not active:
+            await message.answer("Нет активного заказа.", reply_markup=kb_main_menu())
+            return
+        now = utcnow()
+        active.canceled = True
+        user.updated_at = now
+        logger.info("User %s cancelled order %s", user.tg_id, active.order_id)
+        await message.answer(RU.ORDER_CANCELED, reply_markup=kb_main_menu())
 
 
 # ----------------------------------------------------------------------------
@@ -1296,9 +1628,12 @@ async def profile_cancel_order(message: Message, state: FSMContext):
 # ----------------------------------------------------------------------------
 
 async def main() -> None:
+    """Entry point for running the Telegram bot."""
+
     if not SETTINGS.BOT_TOKEN or ":" not in SETTINGS.BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не найден или неверен. Укажите его в .env (BOT_TOKEN=...)")
     await init_models()
+    await prepare_database()
 
     bot = Bot(SETTINGS.BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
