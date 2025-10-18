@@ -2103,7 +2103,7 @@ async def cmd_start(message: Message, state: FSMContext):
     user, created = await get_or_create_user(message.from_user.id, message.from_user.first_name or "")
     logger.info(
         "User issued /start",
-        extra={"tg_id": message.from_user.id, "user_id": user.id, "created": created},
+        extra={"tg_id": message.from_user.id, "user_id": user.id, "is_created": created},
     )
     await message.answer(RU.WELCOME, reply_markup=kb_main_menu())
     if created or (user.tutorial_completed_at is None and user.tutorial_stage < len(TUTORIAL_STEPS)):
