@@ -308,9 +308,25 @@ def safe_handler(func):
 # ----------------------------------------------------------------------------
 
 def utcnow() -> datetime:
-    """Return the current UTC datetime with timezone information."""
+    """Return the current UTC time as naive datetime in UTC zone.
 
-    return datetime.now(timezone.utc)
+    SQLite does not preserve timezone info in ``DateTime`` columns reliably,
+    therefore values loaded back are usually naive. Returning a naive datetime
+    keeps arithmetic consistent when we subtract stored values from the current
+    timestamp.
+    """
+
+    return datetime.utcnow()
+
+
+def ensure_naive(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize datetime to naive UTC representation."""
+
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def slice_page(items: List, page: int, page_size: int = 5) -> Tuple[List, bool, bool]:
@@ -689,7 +705,8 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
     """Apply passive income accumulated since the last interaction."""
 
     now = utcnow()
-    delta_raw = max(0.0, (now - user.last_seen).total_seconds())
+    last_seen = ensure_naive(user.last_seen) or now
+    delta_raw = max(0.0, (now - last_seen).total_seconds())
     delta = min(delta_raw, MAX_OFFLINE_SECONDS)
     user.last_seen = now
     user.updated_at = now
@@ -1699,7 +1716,8 @@ async def profile_daily(message: Message):
         if not user:
             return
         now = utcnow()
-        if user.daily_bonus_at and (now - user.daily_bonus_at) < timedelta(hours=24):
+        last_bonus = ensure_naive(user.daily_bonus_at)
+        if last_bonus and (now - last_bonus) < timedelta(hours=24):
             await message.answer(RU.DAILY_WAIT, reply_markup=kb_main_menu())
             return
         user.daily_bonus_at = now
