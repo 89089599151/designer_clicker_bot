@@ -217,10 +217,10 @@ class RU:
     DAILY_OK = "🎁 Начислен ежедневный бонус: {rub} ₽."
     DAILY_WAIT = "⏰ Бонус уже получен. Загляните позже."
     PROFILE = (
-        "🧑‍💼 {name} · 🏅 Ур. {lvl}\n"
-        "✨ XP: {xp}/{xp_need} {xp_bar} {xp_pct}%\n"
-        "💰 Баланс: {rub} ₽ · 📈 Ср. доход: {avg} ₽\n"
-        "🖱️ Сила клика: {cp} · 💤 Пассив: {passive}/мин\n"
+        "🧑‍💼 {name} — 🏅 ур: {lvl}\n"
+        "✨ XP: {xp}/{xp_need} [{xp_bar}] {xp_pct}%\n"
+        "💰 Баланс: {rub} ₽, 📈 Ср. доход: {avg} ₽\n"
+        "🖱️ Клик: {cp}, 💤 Пассив: {passive}\n"
         "📌 Заказ: {order}\n"
         "🛡️ Баффы: {buffs}\n"
         "📜 Кампания: {campaign}\n"
@@ -2439,10 +2439,10 @@ async def resume_order_work(message: Message):
 # --- Заказы ---
 
 def fmt_orders(orders: List[Order]) -> str:
-    lines = [RU.ORDERS_HEADER, "Введите номер для выбора:", ""]
+    lines = [RU.ORDERS_HEADER, "", "Введите номер для выбора:", ""]
     for i, o in enumerate(orders, 1):
         lines.append(
-            f"{circled_number(i)} {pick_order_icon(o.title)} {o.title} — мин. ур. {o.min_level}"
+            f"{circled_number(i)} {pick_order_icon(o.title)} {o.title} — мин. ур: {o.min_level}"
         )
     return "\n".join(lines)
 
@@ -2665,7 +2665,12 @@ def fmt_boosts(
 ) -> str:
     """Compose a formatted boost list with balance and pricing."""
 
-    lines = [f"💰 Ваш баланс: {format_price(user.balance)}", "🚀 Бусты"]
+    lines = [
+        f"💰 Баланс: {format_price(user.balance)}",
+        "",
+        "🚀 Бусты",
+        "",
+    ]
     if not boosts:
         lines.append("Пока нечего прокачать — возвращайтесь позже.")
         return "\n".join(lines)
@@ -2675,8 +2680,9 @@ def fmt_boosts(
         icon, label, effect = _boost_display(boost)
         lvl_next = levels.get(boost.id, 0) + 1
         cost = format_price(upgrade_cost(boost.base_cost, boost.growth, lvl_next))
+        idx = circled_number(start_index + offset)
         lines.append(
-            f"{start_index + offset}. {icon} {label} — {effect} · ур.→{lvl_next} · {cost}"
+            f"{idx} {icon} {label} — {effect}, ур: {lvl_next}, цена: {cost}"
         )
     return "\n".join(lines)
 
@@ -2874,22 +2880,27 @@ async def shop_cancel_boost(message: Message, state: FSMContext):
 def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool = True) -> str:
     """Format equipment listings with balance, icons and effects."""
 
-    lines: List[str] = []
-    if include_price:
-        lines.append(f"💰 Ваш баланс: {format_price(user.balance)}")
-    lines.append("🚀 Предметы" if include_price else "🎒 Гардероб")
+    header = "🚀 Предметы" if include_price else "🎒 Гардероб"
+    lines: List[str] = [
+        f"💰 Баланс: {format_price(user.balance)}",
+        "",
+        header,
+        "",
+    ]
 
     if not items:
-        lines.append("Пока ничего нет — загляните позже.")
+        empty = "Пока ничего нет — загляните позже." if include_price else "Гардероб пуст — загляните в магазин."
+        lines.append(empty)
         return "\n".join(lines)
 
     start_index = page * 5
     for offset, it in enumerate(items, 1):
         icon = _item_icon(it)
         effect = _format_item_effect(it)
-        entry = f"{start_index + offset}. {icon} {it.name} — {effect}"
+        idx = circled_number(start_index + offset)
+        entry = f"{idx} {icon} {it.name} — {effect}"
         if include_price:
-            entry = f"{entry} · {format_price(it.price)}"
+            entry = f"{entry}, цена: {format_price(it.price)}"
         lines.append(entry)
     return "\n".join(lines)
 
@@ -3210,10 +3221,7 @@ async def team_upgrade_cancel(message: Message, state: FSMContext):
 def fmt_inventory(user: User, items: List[Item], page: int) -> str:
     """Render wardrobe entries with the same visual style as the shop."""
 
-    text = fmt_items(user, items, page, include_price=False)
-    if "Пока ничего нет" in text:
-        return text.replace("Пока ничего нет", "Гардероб пуст — загляните в магазин.")
-    return text
+    return fmt_items(user, items, page, include_price=False)
 
 
 async def render_inventory(message: Message, state: FSMContext):
@@ -3361,7 +3369,8 @@ async def profile_show(message: Message, state: FSMContext):
             if ord_row:
                 order_bar = render_progress_bar(active.progress_clicks, active.required_clicks)
                 order_str = (
-                    f"{ord_row.title} — {active.progress_clicks}/{active.required_clicks} {order_bar}"
+                    f"{ord_row.title} — {active.progress_clicks}/{active.required_clicks} "
+                    f"[{order_bar}]"
                 )
         now = utcnow()
         buffs = (
@@ -3384,12 +3393,12 @@ async def profile_show(message: Message, state: FSMContext):
                 campaign_goal_progress(definition.get("goal", {}), campaign.progress or {}),
                 1.0,
             )
-            status_icon = "✅" if pct >= 100 else ""
+            status_icon = " ✅" if pct >= 100 else ""
             campaign_text = (
-                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}% {status_icon}"
-            ).strip()
+                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)}, {pct}% выполнено{status_icon}"
+            )
         else:
-            campaign_text = "все главы — 100% ✅"
+            campaign_text = "все главы завершены ✅"
         prestige = await get_prestige_entry(session, user)
         xp_need = max(1, xp_to_level(user.level))
         xp_pct = percentage(user.xp, xp_need)
@@ -3405,7 +3414,7 @@ async def profile_show(message: Message, state: FSMContext):
             rub=format_money(user.balance),
             avg=format_money(avg_income),
             cp=format_stat(stats["cp"]),
-            passive=f"{passive_per_min} ₽",
+            passive=f"{passive_per_min} ₽/мин",
             order=order_str,
             buffs=buffs_text,
             campaign=campaign_text,
@@ -3607,7 +3616,7 @@ async def show_achievements(message: Message):
         bar = render_progress_bar(current, target, filled_char="█", empty_char="░")
         status_icon = "✅" if unlocked else "⬜️"
         lines.append(
-            f"{status_icon} {ach.icon} {ach.name} — [{bar}] {pct}% · {current}/{target}"
+            f"{status_icon} {ach.icon} {ach.name} — [{bar}] {pct}%, {current}/{target}"
         )
     await message.answer("\n".join(lines), reply_markup=markup)
 
