@@ -65,6 +65,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Index,
+    case,
     delete,
     select,
     func,
@@ -159,6 +160,7 @@ class RU:
     # Главное меню
     BTN_CLICK = "🖱️ Клик"
     BTN_ORDERS = "📋 Заказы"
+    BTN_UPGRADES = "🛠️ Улучшения"
     BTN_SHOP = "🛒 Магазин"
     BTN_TEAM = "🧑‍🤝‍🧑 Команда"
     BTN_WARDROBE = "🎽 Гардероб"
@@ -173,6 +175,7 @@ class RU:
 
     # Общие
     BTN_MENU = "🏠 Меню"
+    BTN_TO_MENU = "🏠 Перейти в меню"
     BTN_PREV = "⏮️ Страница назад"
     BTN_NEXT = "Страница вперёд ▶️"
     BTN_TAKE = "🚀 Взять заказ"
@@ -186,6 +189,7 @@ class RU:
     BTN_DAILY = "🎁 Ежедневный бонус"
     BTN_CANCEL_ORDER = "🛑 Отменить заказ"
     BTN_BACK = "◀️ Назад"
+    BTN_RETURN_ORDER = "🔙 Вернуться к заказу"
     BTN_HOME = "🏠 Меню"
     BTN_TUTORIAL_NEXT = "➡️ Далее"
     BTN_TUTORIAL_SKIP = "⏭️ Пропустить"
@@ -198,7 +202,8 @@ class RU:
     # Сообщения
     BOT_STARTED = "Бот запущен."
     WELCOME = "🎨 Добро пожаловать в «Дизайнер»! У вас уже 200 ₽ стартового капитала — попробуйте любой раздел ниже."
-    MENU_HINT = "📍 Главное меню: выберите направление развития."
+    MENU_HINT = "📍 Главное меню: выберите раздел."
+    MENU_WITH_ORDER_HINT = "📍 Главное меню: продолжайте заказ или откройте другой раздел."
     TOO_FAST = "⏳ Темп слишком высокий. Дождитесь восстановления лимита."
     NO_ACTIVE_ORDER = "🧾 У вас нет активного заказа. Загляните в раздел «Заказы»."
     CLICK_PROGRESS = "🖱️ Прогресс: {cur}/{req} кликов ({pct}%)."
@@ -206,6 +211,7 @@ class RU:
     ORDER_ALREADY = "⚠️ У вас уже есть активный заказ."
     ORDER_DONE = "✅ Заказ завершён! Награда: {rub} ₽, XP: {xp}."
     ORDER_CANCELED = "↩️ Заказ отменён. Прогресс сброшен."
+    ORDER_RESUME = "🧾 Продолжаем заказ «{title}». Кликай, чтобы продвинуться."
     INSUFFICIENT_FUNDS = "💸 Недостаточно средств."
     PURCHASE_OK = "🛒 Покупка успешна!"
     UPGRADE_OK = "🔼 Повышение выполнено."
@@ -225,10 +231,15 @@ class RU:
         "🏢 Репутация: {rep}"
     )
     TEAM_HEADER = "🧑‍🤝‍🧑 Команда (доход/мин, уровень, цена повышения):"
+    TEAM_LOCKED = "🧑‍🤝‍🧑 Команда откроется со 2 уровня."
     SHOP_HEADER = "🛒 Магазин: выберите раздел для прокачки."
     WARDROBE_HEADER = "🎽 Гардероб: слоты и доступные предметы."
     ORDERS_HEADER = "📋 Доступные заказы (введите номер для выбора):"
-    STATS_HEADER = "📊 Глобальная статистика"
+    UPGRADES_HEADER = "🛠️ Улучшения: выберите раздел."
+    STATS_HEADER = "📊 Средний доход игроков"
+    STATS_ROW = "{idx}. Игрок: {name} — Средний доход: {value} ₽"
+    STATS_EMPTY_ROW = "{idx}. Отсутствует"
+    STATS_POSITION = "📈 Ваше место: {rank} из {total}"
     ACHIEVEMENT_UNLOCK = "🏆 Новое достижение: {title}!"
     ACHIEVEMENTS_TITLE = "🏆 Достижения"
     ACHIEVEMENTS_EMPTY = "Пока нет достижений — продолжайте играть!"
@@ -274,108 +285,137 @@ class RU:
 # Клавиатуры (только ReplyKeyboard)
 # ----------------------------------------------------------------------------
 
-def _with_universal_nav(rows: List[List[KeyboardButton]]) -> ReplyKeyboardMarkup:
-    keyboard = [list(r) for r in rows]
-    nav_back = [KeyboardButton(text=RU.BTN_BACK), KeyboardButton(text=RU.BTN_CANCEL)]
-    nav_home = [KeyboardButton(text=RU.BTN_HOME)]
-    if not any(len(row) == len(nav_back) and all(btn.text == nav_back[idx].text for idx, btn in enumerate(row)) for row in keyboard):
-        keyboard.append(nav_back)
-    if not any(len(row) == len(nav_home) and all(btn.text == nav_home[idx].text for idx, btn in enumerate(row)) for row in keyboard):
-        keyboard.append(nav_home)
+
+def _reply_keyboard(rows: List[List[str]]) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=keyboard,
+        keyboard=[[KeyboardButton(text=cell) for cell in row] for row in rows],
         resize_keyboard=True,
         one_time_keyboard=False,
         selective=False,
     )
 
 
-def kb_main_menu() -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text=RU.BTN_CLICK), KeyboardButton(text=RU.BTN_ORDERS)],
-        [KeyboardButton(text=RU.BTN_SHOP), KeyboardButton(text=RU.BTN_TEAM)],
-        [KeyboardButton(text=RU.BTN_WARDROBE), KeyboardButton(text=RU.BTN_PROFILE)],
-        [KeyboardButton(text=RU.BTN_STATS), KeyboardButton(text=RU.BTN_ACHIEVEMENTS)],
-        [KeyboardButton(text=RU.BTN_CAMPAIGN), KeyboardButton(text=RU.BTN_SKILLS)],
-        [KeyboardButton(text=RU.BTN_QUEST), KeyboardButton(text=RU.BTN_STUDIO)],
-        [KeyboardButton(text=RU.BTN_TOP)],
-    ]
-    return _with_universal_nav(rows)
+def kb_main_menu(has_active_order: bool = False) -> ReplyKeyboardMarkup:
+    rows: List[List[str]] = []
+    if has_active_order:
+        rows.append([RU.BTN_RETURN_ORDER])
+    rows.append([RU.BTN_ORDERS])
+    rows.append([RU.BTN_UPGRADES])
+    rows.append([RU.BTN_PROFILE])
+    return _reply_keyboard(rows)
 
 
-def kb_menu_only() -> ReplyKeyboardMarkup:
-    return _with_universal_nav([])
+def kb_active_order_controls() -> ReplyKeyboardMarkup:
+    return _reply_keyboard([[RU.BTN_CLICK, RU.BTN_TO_MENU]])
 
 
-def kb_numeric_page(show_prev: bool, show_next: bool) -> ReplyKeyboardMarkup:
-    numbers = [KeyboardButton(text=str(i)) for i in range(1, 6)]
-    nav_row: List[KeyboardButton] = []
+def kb_numeric_page(show_prev: bool, show_next: bool, add_back: bool = True) -> ReplyKeyboardMarkup:
+    rows: List[List[str]] = [[str(i) for i in range(1, 6)]]
+    nav_row: List[str] = []
     if show_prev:
-        nav_row.append(KeyboardButton(text=RU.BTN_PREV))
+        nav_row.append(RU.BTN_PREV)
     if show_next:
-        nav_row.append(KeyboardButton(text=RU.BTN_NEXT))
-    rows: List[List[KeyboardButton]] = [numbers]
+        nav_row.append(RU.BTN_NEXT)
     if nav_row:
         rows.append(nav_row)
-    return _with_universal_nav(rows)
+    if add_back:
+        rows.append([RU.BTN_BACK])
+    return _reply_keyboard(rows)
 
 
-def kb_confirm(confirm_text: str = RU.BTN_CONFIRM) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=confirm_text), KeyboardButton(text=RU.BTN_CANCEL)]]
-    return _with_universal_nav(rows)
+def kb_confirm(confirm_text: str = RU.BTN_CONFIRM, add_menu: bool = False) -> ReplyKeyboardMarkup:
+    rows: List[List[str]] = [[confirm_text, RU.BTN_CANCEL]]
+    if add_menu:
+        rows.append([RU.BTN_BACK])
+    return _reply_keyboard(rows)
+
+
+def kb_upgrades_menu(include_team: bool) -> ReplyKeyboardMarkup:
+    rows: List[List[str]] = [[RU.BTN_SHOP], [RU.BTN_WARDROBE]]
+    if include_team:
+        rows.append([RU.BTN_TEAM])
+    rows.append([RU.BTN_BACK])
+    return _reply_keyboard(rows)
 
 
 def kb_shop_menu() -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text=RU.BTN_BOOSTS), KeyboardButton(text=RU.BTN_EQUIPMENT)],
-        [KeyboardButton(text=RU.BTN_STATS)],
-    ]
-    return _with_universal_nav(rows)
+    rows: List[List[str]] = [[RU.BTN_BOOSTS, RU.BTN_EQUIPMENT], [RU.BTN_BACK]]
+    return _reply_keyboard(rows)
 
 
 def kb_profile_menu(has_active_order: bool) -> ReplyKeyboardMarkup:
-    row1 = [KeyboardButton(text=RU.BTN_DAILY), KeyboardButton(text=RU.BTN_SKILLS)]
+    rows: List[List[str]] = [[RU.BTN_DAILY, RU.BTN_SKILLS]]
     if has_active_order:
-        row1.append(KeyboardButton(text=RU.BTN_CANCEL_ORDER))
-    extra = [[KeyboardButton(text=RU.BTN_CAMPAIGN)], [KeyboardButton(text=RU.BTN_STUDIO)]]
-    return _with_universal_nav([row1] + extra)
+        rows[0].append(RU.BTN_CANCEL_ORDER)
+    rows.append([RU.BTN_STATS, RU.BTN_ACHIEVEMENTS])
+    rows.append([RU.BTN_CAMPAIGN, RU.BTN_STUDIO])
+    rows.append([RU.BTN_TOP])
+    rows.append([RU.BTN_BACK])
+    return _reply_keyboard(rows)
 
 
 def kb_tutorial() -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=RU.BTN_TUTORIAL_NEXT), KeyboardButton(text=RU.BTN_TUTORIAL_SKIP)]]
-    return _with_universal_nav(rows)
+    rows = [[RU.BTN_TUTORIAL_NEXT, RU.BTN_TUTORIAL_SKIP], [RU.BTN_BACK]]
+    return _reply_keyboard(rows)
 
 
 def kb_achievement_prompt() -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=RU.BTN_SHOW_ACHIEVEMENTS)]]
-    return _with_universal_nav(rows)
+    rows = [[RU.BTN_SHOW_ACHIEVEMENTS], [RU.BTN_BACK]]
+    return _reply_keyboard(rows)
 
 
 def kb_skill_choices(count: int) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=str(i + 1)) for i in range(count)]]
-    return _with_universal_nav(rows)
+    rows = [[str(i + 1) for i in range(count)], [RU.BTN_BACK]]
+    return _reply_keyboard(rows)
 
 
 def kb_quest_options(options: List[str]) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=opt)] for opt in options]
-    return _with_universal_nav(rows)
+    rows = [[opt] for opt in options]
+    rows.append([RU.BTN_BACK])
+    return _reply_keyboard(rows)
+
+
+async def build_main_menu_markup(
+    session: Optional[AsyncSession] = None,
+    user: Optional[User] = None,
+    tg_id: Optional[int] = None,
+) -> ReplyKeyboardMarkup:
+    """Return main menu keyboard, showing resume button if order is active."""
+
+    if session is None:
+        async with session_scope() as new_session:
+            return await build_main_menu_markup(new_session, user=user, tg_id=tg_id)
+    if user is None and tg_id is not None:
+        user = await get_user_by_tg(session, tg_id)
+    if user is not None:
+        active = await get_active_order(session, user)
+        return kb_main_menu(has_active_order=bool(active))
+    return kb_main_menu()
+
+
+async def main_menu_for_message(
+    message: Message, session: Optional[AsyncSession] = None, user: Optional[User] = None
+) -> ReplyKeyboardMarkup:
+    """Shortcut to build main menu keyboard for a Telegram message."""
+
+    return await build_main_menu_markup(session=session, user=user, tg_id=message.from_user.id)
 
 
 TUTORIAL_STEPS = [
     {
-        "text": "👋 Привет! Здесь вы зарабатываете ₽ кликами. Нажимайте кнопку «Клик», чтобы выполнить первый заказ быстрее.",
-        "button": RU.BTN_CLICK,
-    },
-    {
-        "text": "🧾 Раздел «Заказы» показывает задачи. Выберите заказ, кликайте и получайте ₽ и XP.",
+        "text": "👋 Привет! Начните с раздела «Заказы» — там берём первые задачи и зарабатываем ₽.",
         "button": RU.BTN_ORDERS,
     },
     {
-        "text": "⚡ В «Бустах» усилите клики и пассивный доход, а в «Экипировке» — откройте новые предметы.",
-        "button": RU.BTN_SHOP,
+        "text": "🖱️ После взятия заказа жмите «Клик» и доводите прогресс до 100%.",
+        "button": RU.BTN_CLICK,
     },
     {
-        "text": "🧑‍🤝‍🧑 Нанимайте команду для пассивного дохода и проверяйте прогресс в «Профиле» и «Достижениях».",
+        "text": "🛠️ Раздел «Улучшения» собрал магазин, гардероб и команду для роста дохода.",
+        "button": RU.BTN_UPGRADES,
+    },
+    {
+        "text": "👤 В «Профиле» смотрите статистику, достижения и забирайте бонусы.",
         "button": RU.BTN_PROFILE,
     },
 ]
@@ -385,7 +425,10 @@ async def send_tutorial_step_message(message: Message, step: int) -> None:
     """Send a tutorial step with contextual hint buttons."""
 
     if step >= len(TUTORIAL_STEPS):
-        await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.TUTORIAL_DONE,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     payload = TUTORIAL_STEPS[step]
     hint = RU.TUTORIAL_HINT.format(button=payload["button"])
@@ -410,7 +453,10 @@ def safe_handler(func):
             logger.exception("Unhandled error in %s", func.__name__, exc_info=exc)
             if isinstance(message, Message):
                 try:
-                    await message.answer(ERROR_MESSAGE, reply_markup=kb_main_menu())
+                    await message.answer(
+                        ERROR_MESSAGE,
+                        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+                    )
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to send error notification to user")
 
@@ -1592,7 +1638,10 @@ async def finalize_hell_client(
             created_at=now,
         )
     )
-    await message.answer(RU.QUEST_FINISH.format(rub=rub, xp=xp_gain), reply_markup=kb_menu_only())
+    await message.answer(
+        RU.QUEST_FINISH.format(rub=rub, xp=xp_gain),
+        reply_markup=await build_main_menu_markup(session, user=user),
+    )
     await maybe_prompt_skill_choice(session, message, state, user, prev_level, levels_gained)
     chance = reward_data.get("talism_chance", 0.0)
     if random.random() <= chance:
@@ -1646,7 +1695,10 @@ async def process_hell_client_choice(
             return
         quest = await get_or_create_quest(session, user, QUEST_CODE_HELL_CLIENT)
         if quest.is_done:
-            await message.answer(RU.QUEST_ALREADY_DONE, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.QUEST_ALREADY_DONE,
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
             await state.clear()
             return
         step = HELL_CLIENT_FLOW.get(stage_key)
@@ -1879,32 +1931,42 @@ async def notify_new_achievements(
         ua.notified = True
 
 
-async def fetch_global_stats(session: AsyncSession) -> Dict[str, float]:
-    """Aggregate global metrics across all players."""
+async def fetch_average_income_rows(session: AsyncSession) -> List[Tuple[int, str, float]]:
+    """Return per-user average income composed of passive and active totals."""
 
-    total_players = await session.scalar(select(func.count()).select_from(User)) or 0
-    avg_level = await session.scalar(select(func.avg(User.level))) or 0.0
-
-    passive_sub = (
-        select(EconomyLog.user_id, func.sum(EconomyLog.amount).label("total"))
-        .where(EconomyLog.type == "passive")
+    income_agg = (
+        select(
+            EconomyLog.user_id.label("user_id"),
+            func.sum(
+                case((EconomyLog.type == "passive", EconomyLog.amount), else_=0.0)
+            ).label("passive_total"),
+            func.sum(
+                case((EconomyLog.type == "order_finish", EconomyLog.amount), else_=0.0)
+            ).label("active_total"),
+        )
         .group_by(EconomyLog.user_id)
         .subquery()
     )
-    active_sub = (
-        select(EconomyLog.user_id, func.sum(EconomyLog.amount).label("total"))
-        .where(EconomyLog.type == "order_finish")
-        .group_by(EconomyLog.user_id)
-        .subquery()
-    )
-    avg_passive = await session.scalar(select(func.coalesce(func.avg(passive_sub.c.total), 0.0))) or 0.0
-    avg_active = await session.scalar(select(func.coalesce(func.avg(active_sub.c.total), 0.0))) or 0.0
-    return {
-        "players": float(total_players),
-        "avg_level": float(avg_level),
-        "avg_passive": float(avg_passive),
-        "avg_active": float(avg_active),
-    }
+
+    rows = (
+        await session.execute(
+            select(
+                User.id,
+                User.first_name,
+                func.coalesce(income_agg.c.passive_total, 0.0),
+                func.coalesce(income_agg.c.active_total, 0.0),
+            )
+            .outerjoin(income_agg, income_agg.c.user_id == User.id)
+            .order_by(User.id)
+        )
+    ).all()
+
+    result: List[Tuple[int, str, float]] = []
+    for uid, name, passive_total, active_total in rows:
+        total = float(passive_total or 0.0) + float(active_total or 0.0)
+        display_name = name or f"Игрок {uid}"
+        result.append((uid, display_name, total))
+    return result
 
 
 async def fetch_leaderboards(session: AsyncSession) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
@@ -2092,7 +2154,10 @@ async def ensure_user_loaded(session: AsyncSession, message: Message) -> Optiona
 
     user = await get_user_by_tg(session, message.from_user.id)
     if not user:
-        await message.answer("Нажмите /start", reply_markup=kb_main_menu())
+        await message.answer(
+            "Нажмите /start",
+            reply_markup=await main_menu_for_message(message, session=session),
+        )
         return None
     return user
 
@@ -2105,7 +2170,10 @@ async def cmd_start(message: Message, state: FSMContext):
         "User issued /start",
         extra={"tg_id": message.from_user.id, "user_id": user.id, "is_created": created},
     )
-    await message.answer(RU.WELCOME, reply_markup=kb_main_menu())
+    await message.answer(
+        RU.WELCOME,
+        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+    )
     if created or (user.tutorial_completed_at is None and user.tutorial_stage < len(TUTORIAL_STEPS)):
         await state.set_state(TutorialState.step)
         await send_tutorial_step_message(message, user.tutorial_stage)
@@ -2125,7 +2193,10 @@ async def tutorial_next(message: Message, state: FSMContext):
             user.tutorial_completed_at = utcnow()
             user.updated_at = utcnow()
             await state.clear()
-            await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.TUTORIAL_DONE,
+                reply_markup=await main_menu_for_message(message, session=session, user=user),
+            )
         else:
             await send_tutorial_step_message(message, next_step)
 
@@ -2142,7 +2213,10 @@ async def tutorial_skip(message: Message, state: FSMContext):
         user.tutorial_completed_at = utcnow()
         user.updated_at = utcnow()
     await state.clear()
-    await message.answer(RU.TUTORIAL_DONE, reply_markup=kb_main_menu())
+    await message.answer(
+        RU.TUTORIAL_DONE,
+        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+    )
 
 
 @router.message(F.text.in_({RU.BTN_MENU, RU.BTN_HOME}))
@@ -2154,7 +2228,12 @@ async def back_to_menu(message: Message):
             achievements: List[Tuple[Achievement, UserAchievement]] = []
             await process_offline_income(session, user, achievements)
             await notify_new_achievements(message, achievements)
-    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+            active = await get_active_order(session, user)
+        else:
+            active = None
+        markup = await main_menu_for_message(message, session=session, user=user)
+    hint = RU.MENU_WITH_ORDER_HINT if active else RU.MENU_HINT
+    await message.answer(hint, reply_markup=markup)
 
 
 # --- Клик ---
@@ -2170,7 +2249,10 @@ async def handle_click(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         active = await get_active_order(session, user)
         if not active:
-            await message.answer(RU.NO_ACTIVE_ORDER)
+            await message.answer(
+                RU.NO_ACTIVE_ORDER,
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
             return
         stats = await get_user_stats(session, user)
         cp = stats["cp"]
@@ -2184,7 +2266,8 @@ async def handle_click(message: Message, state: FSMContext):
         if (active.progress_clicks // 10) > (prev // 10) or active.progress_clicks == active.required_clicks:
             pct = int(100 * active.progress_clicks / active.required_clicks)
             await message.answer(
-                RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct)
+                RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct),
+                reply_markup=kb_active_order_controls(),
             )
         if active.progress_clicks >= active.required_clicks:
             reward = finish_order_reward(active.required_clicks, active.reward_snapshot_mul)
@@ -2215,7 +2298,8 @@ async def handle_click(message: Message, state: FSMContext):
                     "reward": reward,
                 },
             )
-            await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain))
+            menu_markup = await main_menu_for_message(message, session=session, user=user)
+            await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain), reply_markup=menu_markup)
             order_entity = await session.scalar(select(Order).where(Order.id == active.order_id))
             await update_campaign_progress(
                 session,
@@ -2226,11 +2310,56 @@ async def handle_click(message: Message, state: FSMContext):
             await maybe_prompt_skill_choice(session, message, state, user, prev_level, levels_gained)
             event_order = await trigger_random_event(session, user, "order_finish", RANDOM_EVENT_ORDER_PROB)
             if event_order:
-                await message.answer(event_order)
+                await message.answer(event_order, reply_markup=menu_markup)
             achievements.extend(await evaluate_achievements(session, user, {"orders", "level", "balance"}))
         if event_message and not event_message.strip() == "":
-            await message.answer(event_message)
+            await message.answer(event_message, reply_markup=kb_active_order_controls())
         await notify_new_achievements(message, achievements)
+
+
+@router.message(F.text == RU.BTN_TO_MENU)
+@safe_handler
+async def leave_order_to_menu(message: Message):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
+        active = await get_active_order(session, user)
+        await notify_new_achievements(message, achievements)
+        markup = await main_menu_for_message(message, session=session, user=user)
+        hint = RU.MENU_WITH_ORDER_HINT if active else RU.MENU_HINT
+    await message.answer(hint, reply_markup=markup)
+
+
+@router.message(F.text == RU.BTN_RETURN_ORDER)
+@safe_handler
+async def resume_order_work(message: Message):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
+        active = await get_active_order(session, user)
+        await notify_new_achievements(message, achievements)
+        if not active:
+            await message.answer(
+                RU.NO_ACTIVE_ORDER,
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
+            return
+        order_entity = await session.scalar(select(Order).where(Order.id == active.order_id))
+        title = order_entity.title if order_entity else "заказ"
+        pct = int(100 * active.progress_clicks / active.required_clicks)
+        progress_line = RU.CLICK_PROGRESS.format(
+            cur=active.progress_clicks, req=active.required_clicks, pct=pct
+        )
+        await message.answer(
+            f"{RU.ORDER_RESUME.format(title=title)}\n{progress_line}",
+            reply_markup=kb_active_order_controls(),
+        )
 
 
 # --- Заказы ---
@@ -2248,6 +2377,24 @@ async def orders_root(message: Message, state: FSMContext):
     await state.set_state(OrdersState.browsing)
     await state.update_data(page=0)
     await _render_orders_page(message, state)
+
+
+@router.message(F.text == RU.BTN_UPGRADES)
+@safe_handler
+async def upgrades_root(message: Message, state: FSMContext):
+    await state.clear()
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            return
+        achievements: List[Tuple[Achievement, UserAchievement]] = []
+        await process_offline_income(session, user, achievements)
+        include_team = user.level >= 2
+        await notify_new_achievements(message, achievements)
+    await message.answer(
+        RU.UPGRADES_HEADER,
+        reply_markup=kb_upgrades_menu(include_team=include_team),
+    )
 
 
 async def _render_orders_page(message: Message, state: FSMContext):
@@ -2292,7 +2439,8 @@ async def choose_order(message: Message, state: FSMContext):
             return
         order = await session.scalar(select(Order).where(Order.id == order_id))
         if not order:
-            await message.answer("Заказ не найден.", reply_markup=kb_menu_only())
+            await message.answer("Заказ не найден.")
+            await _render_orders_page(message, state)
             return
         stats = await get_user_stats(session, user)
         req = snapshot_required_clicks(order, user.level, stats["req_clicks_pct"])
@@ -2352,7 +2500,9 @@ async def take_order(message: Message, state: FSMContext):
         user.updated_at = utcnow()
         order = await session.scalar(select(Order).where(Order.id == order_id))
         if order:
-            await message.answer(RU.ORDER_TAKEN.format(title=order.title), reply_markup=kb_menu_only())
+            await message.answer(
+                RU.ORDER_TAKEN.format(title=order.title), reply_markup=kb_active_order_controls()
+            )
         logger.info(
             "Order taken",
             extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": order_id},
@@ -2434,7 +2584,8 @@ async def shop_choose_boost(message: Message, state: FSMContext):
             return
         boost = await session.scalar(select(Boost).where(Boost.id == bid))
         if not boost:
-            await message.answer("Буст не найден.", reply_markup=kb_menu_only())
+            await message.answer("Буст не найден.")
+            await render_boosts(message, state)
             return
         user_boost = await session.scalar(
             select(UserBoost).where(UserBoost.user_id == user.id, UserBoost.boost_id == bid)
@@ -2478,8 +2629,9 @@ async def shop_buy_boost(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         boost = await session.scalar(select(Boost).where(Boost.id == bid))
         if not boost:
-            await message.answer("Буст не найден.", reply_markup=kb_menu_only())
-            await state.clear()
+            await message.answer("Буст не найден.")
+            await state.set_state(ShopState.boosts)
+            await render_boosts(message, state)
             return
         user_boost = await session.scalar(
             select(UserBoost).where(UserBoost.user_id == user.id, UserBoost.boost_id == bid)
@@ -2487,7 +2639,7 @@ async def shop_buy_boost(message: Message, state: FSMContext):
         lvl_next = (user_boost.level if user_boost else 0) + 1
         cost = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
         if user.balance < cost:
-            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+            await message.answer(RU.INSUFFICIENT_FUNDS)
         else:
             now = utcnow()
             user.balance -= cost
@@ -2514,9 +2666,10 @@ async def shop_buy_boost(message: Message, state: FSMContext):
                     "level": lvl_next,
                 },
             )
-            await message.answer(RU.PURCHASE_OK, reply_markup=kb_menu_only())
+            await message.answer(RU.PURCHASE_OK)
         await notify_new_achievements(message, achievements)
-    await state.clear()
+    await state.set_state(ShopState.boosts)
+    await render_boosts(message, state)
 
 
 @router.message(ShopState.confirm_boost, F.text == RU.BTN_CANCEL)
@@ -2586,7 +2739,8 @@ async def shop_choose_item(message: Message, state: FSMContext):
             return
         it = await session.scalar(select(Item).where(Item.id == item_id))
         if not it:
-            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            await message.answer("Предмет не найден.")
+            await render_items(message, state)
             return
         await message.answer(
             f"Купить предмет «{it.name}» за {it.price} {RU.CURRENCY}?",
@@ -2625,16 +2779,17 @@ async def shop_buy_item(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         item = await session.scalar(select(Item).where(Item.id == item_id))
         if not item:
-            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
-            await state.clear()
+            await message.answer("Предмет не найден.")
+            await state.set_state(ShopState.equipment)
+            await render_items(message, state)
             return
         has = await session.scalar(
             select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id)
         )
         if has:
-            await message.answer("Уже куплено.", reply_markup=kb_menu_only())
+            await message.answer("Уже куплено.")
         elif user.balance < item.price:
-            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+            await message.answer(RU.INSUFFICIENT_FUNDS)
         else:
             now = utcnow()
             user.balance -= item.price
@@ -2667,10 +2822,9 @@ async def shop_buy_item(message: Message, state: FSMContext):
                 else:
                     bonus_str = f"≈+{int(proj_bonus)}"
                 next_hint = f"Следующий уровень (по формуле): {proj_price} {RU.CURRENCY}, {bonus_str}."
-            await message.answer(f"{RU.PURCHASE_OK}\n{next_hint}", reply_markup=kb_menu_only())
+            await message.answer(f"{RU.PURCHASE_OK}\n{next_hint}")
         await notify_new_achievements(message, achievements)
     await state.set_state(ShopState.equipment)
-    await state.update_data(page=0)
     await render_items(message, state)
 
 
@@ -2700,9 +2854,18 @@ async def render_team(message: Message, state: FSMContext):
             return
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
-        members = (
+        members_all = (
             await session.execute(select(TeamMember).order_by(TeamMember.base_cost, TeamMember.id))
         ).scalars().all()
+        unlocked = max(0, min(len(members_all), user.level - 1))
+        members = members_all[:unlocked]
+        if not members:
+            await state.clear()
+            await message.answer(
+                RU.TEAM_LOCKED,
+                reply_markup=kb_upgrades_menu(include_team=False),
+            )
+            return
         levels = {
             mid: lvl
             for mid, lvl in (
@@ -2722,6 +2885,18 @@ async def render_team(message: Message, state: FSMContext):
 @router.message(F.text == RU.BTN_TEAM)
 @safe_handler
 async def team_root(message: Message, state: FSMContext):
+    async with session_scope() as session:
+        user = await ensure_user_loaded(session, message)
+        if not user:
+            await state.clear()
+            return
+        if user.level < 2:
+            await state.clear()
+            await message.answer(
+                RU.TEAM_LOCKED,
+                reply_markup=kb_upgrades_menu(include_team=False),
+            )
+            return
     await state.set_state(TeamState.browsing)
     await state.update_data(page=0)
     await render_team(message, state)
@@ -2742,7 +2917,8 @@ async def team_choose(message: Message, state: FSMContext):
             return
         member = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
         if not member:
-            await message.answer("Сотрудник не найден.", reply_markup=kb_menu_only())
+            await message.answer("Сотрудник не найден.")
+            await render_team(message, state)
             return
         await message.answer(f"Повысить «{member.name}»?", reply_markup=kb_confirm(RU.BTN_UPGRADE))
     await state.set_state(TeamState.confirm)
@@ -2778,8 +2954,9 @@ async def team_upgrade(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         member = await session.scalar(select(TeamMember).where(TeamMember.id == mid))
         if not member:
-            await message.answer("Сотрудник не найден.", reply_markup=kb_menu_only())
-            await state.clear()
+            await message.answer("Сотрудник не найден.")
+            await state.set_state(TeamState.browsing)
+            await render_team(message, state)
             return
         team_entry = await session.scalar(
             select(UserTeam).where(UserTeam.user_id == user.id, UserTeam.member_id == mid)
@@ -2787,7 +2964,7 @@ async def team_upgrade(message: Message, state: FSMContext):
         lvl = team_entry.level if team_entry else 0
         cost = int(round(member.base_cost * (1.22 ** lvl)))
         if user.balance < cost:
-            await message.answer(RU.INSUFFICIENT_FUNDS, reply_markup=kb_menu_only())
+            await message.answer(RU.INSUFFICIENT_FUNDS)
         else:
             now = utcnow()
             user.balance -= cost
@@ -2815,10 +2992,11 @@ async def team_upgrade(message: Message, state: FSMContext):
                 },
             )
             await update_campaign_progress(session, user, "team_upgrade", {})
-            await message.answer(RU.UPGRADE_OK, reply_markup=kb_menu_only())
+            await message.answer(RU.UPGRADE_OK)
             achievements.extend(await evaluate_achievements(session, user, {"team"}))
         await notify_new_achievements(message, achievements)
-    await state.clear()
+    await state.set_state(TeamState.browsing)
+    await render_team(message, state)
 
 
 @router.message(TeamState.confirm, F.text == RU.BTN_CANCEL)
@@ -2885,7 +3063,8 @@ async def wardrobe_choose(message: Message, state: FSMContext):
             return
         it = await session.scalar(select(Item).where(Item.id == item_id))
         if not it:
-            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
+            await message.answer("Предмет не найден.")
+            await render_inventory(message, state)
             return
         await message.answer(f"Экипировать «{it.name}»?", reply_markup=kb_confirm(RU.BTN_EQUIP))
     await state.set_state(WardrobeState.equip_confirm)
@@ -2921,14 +3100,15 @@ async def wardrobe_equip(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         item = await session.scalar(select(Item).where(Item.id == item_id))
         if not item:
-            await message.answer("Предмет не найден.", reply_markup=kb_menu_only())
-            await state.clear()
+            await message.answer("Предмет не найден.")
+            await state.set_state(WardrobeState.browsing)
+            await render_inventory(message, state)
             return
         has = await session.scalar(
             select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id)
         )
         if not has:
-            await message.answer(RU.EQUIP_NOITEM, reply_markup=kb_menu_only())
+            await message.answer(RU.EQUIP_NOITEM)
         else:
             now = utcnow()
             eq = await session.scalar(
@@ -2943,9 +3123,10 @@ async def wardrobe_equip(message: Message, state: FSMContext):
                 "Item equipped",
                 extra={"tg_id": user.tg_id, "user_id": user.id, "item": item.code},
             )
-            await message.answer(RU.EQUIP_OK, reply_markup=kb_menu_only())
+            await message.answer(RU.EQUIP_OK)
         await notify_new_achievements(message, achievements)
-    await state.clear()
+    await state.set_state(WardrobeState.browsing)
+    await render_inventory(message, state)
 
 
 @router.message(WardrobeState.equip_confirm, F.text == RU.BTN_CANCEL)
@@ -3018,7 +3199,10 @@ async def profile_daily(message: Message):
         now = utcnow()
         last_bonus = ensure_naive(user.daily_bonus_at)
         if last_bonus and (now - last_bonus) < timedelta(hours=24):
-            await message.answer(RU.DAILY_WAIT, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.DAILY_WAIT,
+                reply_markup=await main_menu_for_message(message, session=session, user=user),
+            )
             return
         user.daily_bonus_at = now
         user.balance += SETTINGS.DAILY_BONUS_RUB
@@ -3034,7 +3218,10 @@ async def profile_daily(message: Message):
             )
         )
         logger.info("Daily bonus collected", extra={"tg_id": user.tg_id, "user_id": user.id})
-        await message.answer(RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB), reply_markup=kb_main_menu())
+        await message.answer(
+            RU.DAILY_OK.format(rub=SETTINGS.DAILY_BONUS_RUB),
+            reply_markup=await main_menu_for_message(message, session=session, user=user),
+        )
         achievements.extend(await evaluate_achievements(session, user, {"daily", "balance"}))
         await notify_new_achievements(message, achievements)
 
@@ -3049,17 +3236,23 @@ async def quest_entry(message: Message, state: FSMContext):
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
         if user.level < 2:
-            await message.answer(RU.QUEST_LOCKED, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.QUEST_LOCKED,
+                reply_markup=await main_menu_for_message(message, session=session, user=user),
+            )
             return
         quest = await get_or_create_quest(session, user, QUEST_CODE_HELL_CLIENT)
         if quest.is_done:
-            await message.answer(RU.QUEST_ALREADY_DONE, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.QUEST_ALREADY_DONE,
+                reply_markup=await main_menu_for_message(message, session=session, user=user),
+            )
             return
         quest.stage = 0
         quest_get_stage_payload(quest)
         await notify_new_achievements(message, achievements)
     await state.set_state(HellClientState.intro)
-    await message.answer(RU.QUEST_INTRO, reply_markup=kb_menu_only())
+    await message.answer(RU.QUEST_INTRO)
     await send_hell_client_step(message, "intro")
 
 
@@ -3100,12 +3293,18 @@ async def show_skills_menu(message: Message):
         ).all()
         await notify_new_achievements(message, achievements)
     if not rows:
-        await message.answer(RU.SKILL_LIST_EMPTY, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.SKILL_LIST_EMPTY,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     lines = [RU.SKILL_LIST_HEADER, ""]
     for idx, (name, effect, taken_at) in enumerate(rows, 1):
         lines.append(f"{idx}. {name} — {describe_effect(effect)}")
-    await message.answer("\n".join(lines), reply_markup=kb_main_menu())
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+    )
 
 
 @router.message(F.text == RU.BTN_STATS)
@@ -3117,20 +3316,28 @@ async def show_global_stats(message: Message):
             return
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
-        stats = await fetch_global_stats(session)
+        rows = await fetch_average_income_rows(session)
+        active = await get_active_order(session, user)
         await notify_new_achievements(message, achievements)
-    if int(stats["players"]) == 0:
-        await message.answer(RU.STATS_NO_DATA, reply_markup=kb_main_menu())
+    markup = kb_profile_menu(has_active_order=bool(active))
+    if not rows:
+        await message.answer(RU.STATS_NO_DATA, reply_markup=markup)
         return
-    lines = [
-        RU.STATS_HEADER,
-        "",
-        RU.STATS_ROW.format(label="Средний активный доход", value=f"{stats['avg_active']:.1f} {RU.CURRENCY}"),
-        RU.STATS_ROW.format(label="Средний пассивный доход", value=f"{stats['avg_passive']:.1f} {RU.CURRENCY}"),
-        RU.STATS_ROW.format(label="Средний уровень", value=f"{stats['avg_level']:.1f}"),
-        RU.STATS_ROW.format(label="Игроков всего", value=f"{int(stats['players'])}"),
-    ]
-    await message.answer("\n".join(lines), reply_markup=kb_main_menu())
+    ordered = sorted(rows, key=lambda entry: entry[2], reverse=True)
+    total_players = len(ordered)
+    lines = [RU.STATS_HEADER, ""]
+    for idx in range(1, 6):
+        if idx <= total_players:
+            _, name, income = ordered[idx - 1]
+            lines.append(
+                RU.STATS_ROW.format(idx=idx, name=name, value=f"{int(round(income)):,}".replace(",", " "))
+            )
+        else:
+            lines.append(RU.STATS_EMPTY_ROW.format(idx=idx))
+    player_rank = next((idx for idx, (uid, _, _) in enumerate(ordered, start=1) if uid == user.id), total_players + 1)
+    lines.append("")
+    lines.append(RU.STATS_POSITION.format(rank=player_rank, total=total_players))
+    await message.answer("\n".join(lines), reply_markup=markup)
 
 
 @router.message(F.text.in_({RU.BTN_ACHIEVEMENTS, RU.BTN_SHOW_ACHIEVEMENTS}))
@@ -3154,9 +3361,11 @@ async def show_achievements(message: Message):
                 .order_by(Achievement.id)
             )
         ).all()
+        active = await get_active_order(session, user)
         await notify_new_achievements(message, achievements_new)
+    markup = kb_profile_menu(has_active_order=bool(active))
     if not rows:
-        await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=kb_main_menu())
+        await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=markup)
         return
     lines = [RU.ACHIEVEMENTS_TITLE, ""]
     for ach, ua in rows:
@@ -3166,7 +3375,7 @@ async def show_achievements(message: Message):
         icon = ach.icon if unlocked else "⬜"
         desc = f"{ach.description} — {status}"
         lines.append(RU.ACHIEVEMENTS_ENTRY.format(icon=icon, name=ach.name, desc=desc))
-    await message.answer("\n".join(lines), reply_markup=kb_main_menu())
+    await message.answer("\n".join(lines), reply_markup=markup)
 
 
 @router.message(F.text == RU.BTN_CAMPAIGN)
@@ -3180,16 +3389,18 @@ async def show_campaign(message: Message, state: FSMContext):
         await process_offline_income(session, user, achievements)
         progress = await get_campaign_progress_entry(session, user)
         definition = get_campaign_definition(progress.chapter)
+        active = await get_active_order(session, user)
+        goal = definition.get("goal", {}) if definition else {}
+        pct = int(campaign_goal_progress(goal, progress.progress or {}) * 100) if definition else 0
+        min_level = definition.get("min_level", 1) if definition else 1
+        markup_profile = kb_profile_menu(has_active_order=bool(active))
         if not definition:
-            await message.answer(RU.CAMPAIGN_EMPTY, reply_markup=kb_main_menu())
+            await message.answer(RU.CAMPAIGN_EMPTY, reply_markup=markup_profile)
             return
-        goal = definition.get("goal", {})
-        pct = int(campaign_goal_progress(goal, progress.progress or {}) * 100)
-        min_level = definition.get("min_level", 1)
         if user.level < min_level:
             await message.answer(
                 RU.CAMPAIGN_HEADER + f"\nДоступ с уровня {min_level}.",
-                reply_markup=kb_main_menu(),
+                reply_markup=markup_profile,
             )
             return
         lines = [
@@ -3206,9 +3417,9 @@ async def show_campaign(message: Message, state: FSMContext):
         if progress.is_done:
             lines.append("")
             lines.append(RU.CAMPAIGN_DONE)
-            markup = _with_universal_nav([[KeyboardButton(text=RU.BTN_CAMPAIGN_CLAIM)]])
+            markup = _reply_keyboard([[RU.BTN_CAMPAIGN_CLAIM], [RU.BTN_BACK]])
         else:
-            markup = kb_menu_only()
+            markup = markup_profile
         await message.answer("\n".join(lines), reply_markup=markup)
         await notify_new_achievements(message, achievements)
 
@@ -3222,10 +3433,16 @@ async def claim_campaign_handler(message: Message, state: FSMContext):
             return
         result = await claim_campaign_reward(session, user)
         if not result:
-            await message.answer(RU.CAMPAIGN_EMPTY, reply_markup=kb_main_menu())
+            await message.answer(
+                RU.CAMPAIGN_EMPTY,
+                reply_markup=kb_profile_menu(
+                    has_active_order=bool(await get_active_order(session, user))
+                ),
+            )
             return
         text, prev_level, levels_gained = result
-        await message.answer(text, reply_markup=kb_main_menu())
+        markup = kb_profile_menu(has_active_order=bool(await get_active_order(session, user)))
+        await message.answer(text, reply_markup=markup)
         await maybe_prompt_skill_choice(session, message, state, user, prev_level, levels_gained)
 
 
@@ -3239,8 +3456,10 @@ async def show_studio(message: Message, state: FSMContext):
             return
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
+        active = await get_active_order(session, user)
+        profile_markup = kb_profile_menu(has_active_order=bool(active))
         if user.level < 20:
-            await message.answer(RU.STUDIO_LOCKED, reply_markup=kb_main_menu())
+            await message.answer(RU.STUDIO_LOCKED, reply_markup=profile_markup)
             return
         prestige = await get_prestige_entry(session, user)
         gain = max(0, user.balance // 1000)
@@ -3252,7 +3471,7 @@ async def show_studio(message: Message, state: FSMContext):
             await state.update_data(gain=gain)
             markup = kb_confirm(RU.BTN_STUDIO_CONFIRM)
         else:
-            markup = kb_main_menu()
+            markup = profile_markup
         await message.answer(text, reply_markup=markup)
         await notify_new_achievements(message, achievements)
 
@@ -3268,7 +3487,8 @@ async def confirm_studio(message: Message, state: FSMContext):
             await state.clear()
             return
         await perform_prestige_reset(session, user, gain)
-        await message.answer(RU.STUDIO_DONE.format(gain=gain), reply_markup=kb_main_menu())
+        markup = kb_profile_menu(has_active_order=bool(await get_active_order(session, user)))
+        await message.answer(RU.STUDIO_DONE.format(gain=gain), reply_markup=markup)
     await state.clear()
 
 
@@ -3276,7 +3496,10 @@ async def confirm_studio(message: Message, state: FSMContext):
 @safe_handler
 async def cancel_studio(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+    async with session_scope() as session:
+        user = await get_user_by_tg(session, message.from_user.id)
+        markup = await main_menu_for_message(message, session=session, user=user)
+    await message.answer(RU.MENU_HINT, reply_markup=markup)
 
 
 @router.message(Command("top"))
@@ -3291,8 +3514,9 @@ async def show_leaderboard(message: Message):
         await process_offline_income(session, user, achievements)
         top_balance, top_level = await fetch_leaderboards(session)
         await notify_new_achievements(message, achievements)
+    markup = await build_main_menu_markup(tg_id=message.from_user.id)
     if not top_balance and not top_level:
-        await message.answer(RU.TOP_EMPTY, reply_markup=kb_main_menu())
+        await message.answer(RU.TOP_EMPTY, reply_markup=markup)
         return
     bal_lines = [
         RU.TOP_BALANCE.format(
@@ -3314,7 +3538,7 @@ async def show_leaderboard(message: Message):
             else RU.TOP_EMPTY
         )
     ]
-    await message.answer("\n\n".join(bal_lines + lvl_lines), reply_markup=kb_main_menu())
+    await message.answer("\n\n".join(bal_lines + lvl_lines), reply_markup=markup)
 
 
 @router.message(SkillsState.picking)
@@ -3338,14 +3562,20 @@ async def pick_skill(message: Message, state: FSMContext):
             return
         skill = await session.scalar(select(Skill).where(Skill.code == code))
         if not skill:
-            await message.answer("Навык не найден.", reply_markup=kb_main_menu())
+            await message.answer(
+                "Навык не найден.",
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
             await state.clear()
             return
         existing = await session.scalar(
             select(UserSkill).where(UserSkill.user_id == user.id, UserSkill.skill_code == code)
         )
         if existing:
-            await message.answer(RU.SKILL_PICKED.format(name=skill.name), reply_markup=kb_main_menu())
+            await message.answer(
+                RU.SKILL_PICKED.format(name=skill.name),
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
         else:
             session.add(UserSkill(user_id=user.id, skill_code=code, taken_at=utcnow()))
             session.add(
@@ -3357,7 +3587,10 @@ async def pick_skill(message: Message, state: FSMContext):
                     created_at=utcnow(),
                 )
             )
-            await message.answer(RU.SKILL_PICKED.format(name=skill.name), reply_markup=kb_main_menu())
+            await message.answer(
+                RU.SKILL_PICKED.format(name=skill.name),
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
     await state.clear()
 
 
@@ -3370,7 +3603,10 @@ async def profile_cancel_order(message: Message, state: FSMContext):
             return
         active = await get_active_order(session, user)
         if not active:
-            await message.answer("Нет активного заказа.", reply_markup=kb_main_menu())
+            await message.answer(
+                "Нет активного заказа.",
+                reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+            )
             return
         now = utcnow()
         active.canceled = True
@@ -3379,7 +3615,8 @@ async def profile_cancel_order(message: Message, state: FSMContext):
             "Order cancelled",
             extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": active.order_id},
         )
-        await message.answer(RU.ORDER_CANCELED, reply_markup=kb_main_menu())
+        markup = await build_main_menu_markup(tg_id=message.from_user.id)
+        await message.answer(RU.ORDER_CANCELED, reply_markup=markup)
 
 
 @router.message(F.text == RU.BTN_CANCEL)
@@ -3387,7 +3624,10 @@ async def profile_cancel_order(message: Message, state: FSMContext):
 async def cancel_any(message: Message, state: FSMContext):
     current = await state.get_state()
     if current is None:
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.MENU_HINT,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     if current == TutorialState.step.state:
         await tutorial_skip(message, state)
@@ -3427,10 +3667,16 @@ async def cancel_any(message: Message, state: FSMContext):
         StudioState.confirm.state,
     }:
         await state.clear()
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.MENU_HINT,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     await state.clear()
-    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+    await message.answer(
+        RU.MENU_HINT,
+        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+    )
 
 
 @router.message(F.text == RU.BTN_BACK)
@@ -3438,7 +3684,10 @@ async def cancel_any(message: Message, state: FSMContext):
 async def handle_back(message: Message, state: FSMContext):
     current = await state.get_state()
     if current is None:
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.MENU_HINT,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     if current == TutorialState.step.state:
         await tutorial_skip(message, state)
@@ -3449,7 +3698,10 @@ async def handle_back(message: Message, state: FSMContext):
         return
     if current == OrdersState.browsing.state:
         await state.clear()
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.MENU_HINT,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     if current == ShopState.confirm_boost.state:
         await state.set_state(ShopState.boosts)
@@ -3459,7 +3711,19 @@ async def handle_back(message: Message, state: FSMContext):
         await state.set_state(ShopState.equipment)
         await render_items(message, state)
         return
-    if current == ShopState.boosts.state or current == ShopState.equipment.state or current == ShopState.root.state:
+    if current == ShopState.root.state:
+        await state.clear()
+        async with session_scope() as session:
+            user = await ensure_user_loaded(session, message)
+            if not user:
+                return
+            include_team = user.level >= 2
+        await message.answer(
+            RU.UPGRADES_HEADER,
+            reply_markup=kb_upgrades_menu(include_team=include_team),
+        )
+        return
+    if current in {ShopState.boosts.state, ShopState.equipment.state}:
         await state.set_state(ShopState.root)
         await message.answer(RU.SHOP_HEADER, reply_markup=kb_shop_menu())
         return
@@ -3469,7 +3733,15 @@ async def handle_back(message: Message, state: FSMContext):
         return
     if current == TeamState.browsing.state:
         await state.clear()
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        async with session_scope() as session:
+            user = await ensure_user_loaded(session, message)
+            if not user:
+                return
+            include_team = user.level >= 2
+        await message.answer(
+            RU.UPGRADES_HEADER,
+            reply_markup=kb_upgrades_menu(include_team=include_team),
+        )
         return
     if current == WardrobeState.equip_confirm.state:
         await state.set_state(WardrobeState.browsing)
@@ -3477,7 +3749,15 @@ async def handle_back(message: Message, state: FSMContext):
         return
     if current == WardrobeState.browsing.state:
         await state.clear()
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        async with session_scope() as session:
+            user = await ensure_user_loaded(session, message)
+            if not user:
+                return
+            include_team = user.level >= 2
+        await message.answer(
+            RU.UPGRADES_HEADER,
+            reply_markup=kb_upgrades_menu(include_team=include_team),
+        )
         return
     if current in {
         SkillsState.picking.state,
@@ -3487,10 +3767,16 @@ async def handle_back(message: Message, state: FSMContext):
         StudioState.confirm.state,
     }:
         await state.clear()
-        await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+        await message.answer(
+            RU.MENU_HINT,
+            reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+        )
         return
     await state.clear()
-    await message.answer(RU.MENU_HINT, reply_markup=kb_main_menu())
+    await message.answer(
+        RU.MENU_HINT,
+        reply_markup=await build_main_menu_markup(tg_id=message.from_user.id),
+    )
 
 
 # ----------------------------------------------------------------------------
