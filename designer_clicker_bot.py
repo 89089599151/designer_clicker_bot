@@ -2608,6 +2608,21 @@ BOOST_TYPE_META: Dict[str, Tuple[str, str, str]] = {
     "passive": ("💼", "Пассивный доход", "к пассивному доходу"),
 }
 
+TEAM_MEMBER_ICONS: Dict[str, str] = {
+    "junior": "🎨",
+    "middle": "🧠",
+    "senior": "🏆",
+    "pm": "🧭",
+}
+
+TEAM_LEVEL_TITLES: Tuple[str, ...] = (
+    "🔰 Новичок",
+    "🧪 Стажёр",
+    "🎯 Исполнитель",
+    "🧠 Наставник",
+    "⭐ Легенда",
+)
+
 ITEM_BONUS_LABELS: Dict[str, str] = {
     "cp_pct": "к силе клика",
     "passive_pct": "к пассивному доходу",
@@ -2643,6 +2658,22 @@ def _boost_display(boost: Boost) -> Tuple[str, str, str]:
     return icon, label or boost.name, effect
 
 
+def _team_icon(member: TeamMember) -> str:
+    """Return an emoji for a team member code."""
+
+    return TEAM_MEMBER_ICONS.get(member.code, "👥")
+
+
+def _team_rank(level: int) -> str:
+    """Return a flavorful rank label for the provided level."""
+
+    if level <= 0:
+        return TEAM_LEVEL_TITLES[0]
+    if level < len(TEAM_LEVEL_TITLES):
+        return TEAM_LEVEL_TITLES[level]
+    return TEAM_LEVEL_TITLES[-1]
+
+
 def _format_item_effect(item: Item) -> str:
     """Human readable representation of an item's bonus."""
 
@@ -2663,10 +2694,10 @@ def _item_icon(item: Item) -> str:
 def fmt_boosts(
     user: User, boosts: List[Boost], levels: Dict[int, int], page: int, page_size: int = 5
 ) -> str:
-    """Compose a formatted boost list with balance and pricing."""
+    """Compose a formatted boost list with balance, header and upgrade hints."""
 
     lines = [
-        f"💰 Баланс: {format_price(user.balance)}",
+        f"💰 Ваш баланс: {format_price(user.balance)}",
         "",
         "🚀 Бусты",
         "",
@@ -2679,10 +2710,10 @@ def fmt_boosts(
     for offset, boost in enumerate(boosts, 1):
         icon, label, effect = _boost_display(boost)
         lvl_next = levels.get(boost.id, 0) + 1
-        cost = format_price(upgrade_cost(boost.base_cost, boost.growth, lvl_next))
+        cost_value = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
         idx = circled_number(start_index + offset)
         lines.append(
-            f"{idx} {icon} {label} — {effect}, ур: {lvl_next}, цена: {cost}"
+            f"{idx} {icon} {label} — {effect}, ур: {lvl_next}, цена: {format_price(cost_value)}"
         )
     return "\n".join(lines)
 
@@ -2878,18 +2909,22 @@ async def shop_cancel_boost(message: Message, state: FSMContext):
 # --- Магазин: экипировка ---
 
 def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool = True) -> str:
-    """Format equipment listings with balance, icons and effects."""
+    """Format equipment or wardrobe listings in the unified visual style."""
 
-    header = "🚀 Предметы" if include_price else "🎒 Гардероб"
+    header = "🧰 Экипировка" if include_price else "👕 Гардероб"
     lines: List[str] = [
-        f"💰 Баланс: {format_price(user.balance)}",
+        f"💰 Ваш баланс: {format_price(user.balance)}",
         "",
         header,
         "",
     ]
 
     if not items:
-        empty = "Пока ничего нет — загляните позже." if include_price else "Гардероб пуст — загляните в магазин."
+        empty = (
+            "Пока ничего нет — загляните позже."
+            if include_price
+            else "Гардероб пуст — загляните в магазин."
+        )
         lines.append(empty)
         return "\n".join(lines)
 
@@ -3047,13 +3082,43 @@ async def shop_cancel_item(message: Message, state: FSMContext):
 
 # --- Команда ---
 
-def fmt_team(sub: List[TeamMember], levels: Dict[int, int], costs: Dict[int, int]) -> str:
-    lines = [RU.TEAM_HEADER]
-    for i, m in enumerate(sub, 1):
-        lvl = levels.get(m.id, 0)
+def fmt_team(
+    user: User,
+    members: List[TeamMember],
+    levels: Dict[int, int],
+    costs: Dict[int, int],
+    page: int,
+) -> str:
+    """Render team overview with circled numbering and progress bars."""
+
+    lines: List[str] = [
+        "👥 Команда",
+        "(доход/мин, уровень, цена повышения)",
+        "",
+    ]
+    if not members:
+        lines.append("Пока никто не нанят — открывайте новых специалистов уровнем выше.")
+        return "\n".join(lines)
+
+    start_index = page * 5
+    for offset, member in enumerate(members, 1):
+        lvl = levels.get(member.id, 0)
         income = team_income_per_min(m.base_income_per_min, lvl)
-        lines.append(f"[{i}] {m.name}: {income:.0f}/мин, ур. {lvl}, цена повышения {costs[m.id]} {RU.CURRENCY}")
-    return "\n".join(lines)
+        cost = costs[member.id]
+        icon = _team_icon(member)
+        idx = circled_number(start_index + offset)
+        rank_label = _team_rank(lvl)
+        progress_value = min(user.balance, cost)
+        bar = render_progress_bar(progress_value, cost, filled_char="█", empty_char="░")
+        lines.append(
+            f"{idx} {icon} {member.name} — {format_money(income)} ₽/мин, ур: {lvl}, апгр: {format_price(cost)}"
+        )
+        lines.append(f"   {rank_label}")
+        lines.append(
+            f"   Прогресс к повышению: [{bar}] {format_money(progress_value)}/{format_money(cost)} ₽"
+        )
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 async def render_team(message: Message, state: FSMContext):
@@ -3087,7 +3152,10 @@ async def render_team(message: Message, state: FSMContext):
         costs = {m.id: int(round(m.base_cost * (1.22 ** max(0, levels.get(m.id, 0))))) for m in members}
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(members, page, 5)
-        await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
+        await message.answer(
+            fmt_team(user, sub, levels, costs, page),
+            reply_markup=kb_numeric_page(has_prev, has_next),
+        )
         await state.update_data(member_ids=[m.id for m in sub], page=page)
         await notify_new_achievements(message, achievements)
 
@@ -3395,7 +3463,7 @@ async def profile_show(message: Message, state: FSMContext):
             )
             status_icon = " ✅" if pct >= 100 else ""
             campaign_text = (
-                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)}, {pct}% выполнено{status_icon}"
+                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}% выполнено{status_icon}"
             )
         else:
             campaign_text = "все главы завершены ✅"
@@ -3605,7 +3673,7 @@ async def show_achievements(message: Message):
     if not rows:
         await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=markup)
         return
-    lines = [RU.ACHIEVEMENTS_TITLE]
+    lines = [RU.ACHIEVEMENTS_TITLE, ""]
     for ach, ua in rows:
         unlocked = bool(ua and ua.unlocked_at)
         current = ua.progress if ua else 0
