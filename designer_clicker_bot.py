@@ -99,11 +99,29 @@ SETTINGS = Settings()
 
 MAX_OFFLINE_SECONDS = 12 * 60 * 60
 BASE_CLICK_LIMIT = 10
-MAX_CLICK_LIMIT = 15
+MAX_CLICK_LIMIT = 30
 RANDOM_EVENT_CLICK_INTERVAL = 20
 RANDOM_EVENT_CLICK_PROB = 0.25
 RANDOM_EVENT_ORDER_PROB = 0.35
 SKILL_LEVEL_INTERVAL = 5
+
+COMBO_RESET_SECONDS = 3.0
+FREE_ORDER_PROGRESS_PCT = 0.1
+FAST_ORDER_SECONDS = 300
+HIGH_ORDER_MIN_LEVEL = 5
+REQ_CLICKS_REDUCTION_CAP = 0.30
+SHOP_DISCOUNT_CAP = 0.20
+NEGATIVE_EVENT_REDUCTION_CAP = 0.90
+TEAM_DISCOUNT_CAP = 0.80
+
+
+@dataclass
+class ComboTracker:
+    bonus: float = 0.0
+    last_ts: float = 0.0
+
+
+_combo_states: Dict[int, ComboTracker] = {}
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -558,7 +576,7 @@ class Boost(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
-    type: Mapped[Literal["cp", "reward", "passive"]] = mapped_column(String(20))
+    type: Mapped[str] = mapped_column(String(30))
     base_cost: Mapped[int] = mapped_column(Integer)
     growth: Mapped[float] = mapped_column(Float)
     step_value: Mapped[float] = mapped_column(Float)
@@ -823,10 +841,32 @@ SEED_ORDERS = [
 ]
 
 SEED_BOOSTS = [
-    {"code": "cp_plus_1", "name": "Клик +1", "type": "cp", "base_cost": 100, "growth": 1.25, "step_value": 1},
-    {"code": "reward_mul_10", "name": "Награда +10%", "type": "reward", "base_cost": 300, "growth": 1.18, "step_value": 0.10},
-    {"code": "passive_mul_10", "name": "Пассивный доход +10%", "type": "passive", "base_cost": 400, "growth": 1.18, "step_value": 0.10},
+    {"code": "reward_mastery", "name": "🎯 Награда", "type": "reward", "base_cost": 300, "growth": 1.28, "step_value": 0.10},
+    {"code": "finger_training", "name": "🧪 Тренировка пальцев", "type": "cp", "base_cost": 380, "growth": 1.25, "step_value": 1},
+    {"code": "passive_income_plus", "name": "💼 Пассивный доход", "type": "passive", "base_cost": 460, "growth": 1.27, "step_value": 0.10},
+    {"code": "click_overdrive", "name": "⚡️ Клик", "type": "cp", "base_cost": 520, "growth": 1.25, "step_value": 1},
+    {"code": "accelerated_learning", "name": "🧠 Ускоренное обучение", "type": "xp", "base_cost": 560, "growth": 1.22, "step_value": 0.08},
+    {"code": "critical_strike", "name": "💥 Крит-удар", "type": "crit", "base_cost": 700, "growth": 1.28, "step_value": 0.02},
+    {"code": "anti_brak", "name": "🧿 Антибрак", "type": "event_protection", "base_cost": 740, "growth": 1.26, "step_value": 0.10},
+    {"code": "process_optimization", "name": "🎛️ Оптимизация процессов", "type": "passive", "base_cost": 760, "growth": 1.27, "step_value": 0.06},
+    {"code": "combo_click", "name": "🔗 Комбо-клик", "type": "combo", "base_cost": 820, "growth": 1.25, "step_value": 0.2},
+    {"code": "team_synergy", "name": "🧑‍🤝‍🧑 Слаженная команда", "type": "team_income", "base_cost": 860, "growth": 1.28, "step_value": 0.07},
+    {"code": "ergonomics", "name": "🪑 Эргономика", "type": "ratelimit", "base_cost": 900, "growth": 1.30, "step_value": 1},
+    {"code": "requirement_relief", "name": "🧭 Снижение требований", "type": "req_clicks", "base_cost": 980, "growth": 1.35, "step_value": 0.03},
+    {"code": "quick_briefs", "name": "📦 Быстрые брифы", "type": "free_order", "base_cost": 1040, "growth": 1.28, "step_value": 0.03},
+    {"code": "contractor_discount", "name": "🧾 Скидки подрядчикам", "type": "team_discount", "base_cost": 1080, "growth": 1.30, "step_value": 0.05},
+    {"code": "deep_offline", "name": "💤 Глубокий офлайн", "type": "offline_cap", "base_cost": 1140, "growth": 1.32, "step_value": 7200},
+    {"code": "tight_deadlines", "name": "⏱️ Сжатые дедлайны", "type": "rush_reward", "base_cost": 1200, "growth": 1.30, "step_value": 0.05},
+    {"code": "gear_tuning", "name": "🧰 Тюнинг экипировки", "type": "equipment_eff", "base_cost": 1280, "growth": 1.35, "step_value": 0.05},
+    {"code": "night_flow", "name": "🌙 Ночной поток", "type": "night_passive", "base_cost": 1360, "growth": 1.33, "step_value": 0.12},
+    {"code": "shop_wholesale", "name": "🛍️ Опт в магазине", "type": "shop_discount", "base_cost": 1420, "growth": 1.33, "step_value": 0.04},
+    {"code": "premium_projects", "name": "🎯 Премиум-проекты", "type": "high_order_reward", "base_cost": 1500, "growth": 1.34, "step_value": 0.08},
 ]
+
+BOOST_EXTRA_META: Dict[str, Dict[str, Any]] = {
+    "critical_strike": {"crit_multiplier": 1.5},
+    "combo_click": {"combo_cap": 2.0},
+}
 
 SEED_TEAM = [
     {"code": "junior", "name": "Junior Designer", "base_income_per_min": 4, "base_cost": 100},
@@ -1054,7 +1094,7 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
 
     rows = (
         await session.execute(
-            select(Boost.type, UserBoost.level, Boost.step_value)
+            select(Boost.code, Boost.type, UserBoost.level, Boost.step_value)
             .select_from(UserBoost)
             .join(Boost, Boost.id == UserBoost.boost_id)
             .where(UserBoost.user_id == user.id)
@@ -1063,14 +1103,69 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
     cp_add = 0
     reward_add = 0.0
     passive_add = 0.0
-    for btype, lvl, step in rows:
+    xp_pct = 0.0
+    req_clicks_pct_boost = 0.0
+    ratelimit_plus = 0
+    crit_chance = 0.0
+    crit_multiplier = 1.0
+    team_income_pct = 0.0
+    free_order_chance = 0.0
+    team_discount_pct = 0.0
+    offline_cap_bonus = 0.0
+    rush_reward_pct = 0.0
+    equipment_eff_pct = 0.0
+    night_passive_pct = 0.0
+    shop_discount_pct = 0.0
+    high_order_reward_pct = 0.0
+    negative_event_reduction = 0.0
+    combo_step = 0.0
+    combo_cap = 0.0
+    for code, btype, lvl, step in rows:
+        if lvl <= 0 or step == 0:
+            continue
+        value = lvl * step
         if btype == "cp":
-            cp_add += int(lvl * step)
+            cp_add += int(value)
         elif btype == "reward":
-            reward_add += lvl * step
+            reward_add += value
         elif btype == "passive":
-            passive_add += lvl * step
-    # Экип
+            passive_add += value
+        elif btype == "xp":
+            xp_pct += value
+        elif btype == "crit":
+            crit_chance += value
+            extra = BOOST_EXTRA_META.get(code, {})
+            crit_multiplier = max(crit_multiplier, extra.get("crit_multiplier", crit_multiplier))
+        elif btype == "event_protection":
+            negative_event_reduction += value
+        elif btype == "combo":
+            combo_step += value
+            extra = BOOST_EXTRA_META.get(code, {})
+            combo_cap = max(combo_cap, extra.get("combo_cap", combo_cap))
+        elif btype == "team_income":
+            team_income_pct += value
+        elif btype == "ratelimit":
+            ratelimit_plus += int(round(value))
+        elif btype == "req_clicks":
+            req_clicks_pct_boost += value
+        elif btype == "free_order":
+            free_order_chance += value
+        elif btype == "team_discount":
+            team_discount_pct += value
+        elif btype == "offline_cap":
+            offline_cap_bonus += value
+        elif btype == "rush_reward":
+            rush_reward_pct += value
+        elif btype == "equipment_eff":
+            equipment_eff_pct += value
+        elif btype == "night_passive":
+            night_passive_pct += value
+        elif btype == "shop_discount":
+            shop_discount_pct += value
+        elif btype == "high_order_reward":
+            high_order_reward_pct += value
+
+    equipment_multiplier = 1.0 + equipment_eff_pct
     items = (
         await session.execute(
             select(Item.bonus_type, Item.bonus_value)
@@ -1082,18 +1177,18 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
     passive_pct = 0.0
     req_clicks_pct = 0.0
     reward_pct = 0.0
-    ratelimit_plus = 0
     for btype, val in items:
+        boosted_val = val * equipment_multiplier
         if btype == "cp_pct":
-            cp_pct += val
+            cp_pct += boosted_val
         elif btype == "passive_pct":
-            passive_pct += val
+            passive_pct += boosted_val
         elif btype == "req_clicks_pct":
-            req_clicks_pct += val
+            req_clicks_pct += boosted_val
         elif btype == "reward_pct":
-            reward_pct += val
+            reward_pct += boosted_val
         elif btype == "ratelimit_plus":
-            ratelimit_plus += int(val)
+            ratelimit_plus += int(round(boosted_val))
 
     now = utcnow()
     active_buffs = (
@@ -1101,7 +1196,6 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
             select(UserBuff).where(UserBuff.user_id == user.id)
         )
     ).scalars().all()
-    xp_pct = 0.0
     expired_ids: List[int] = []
     for buff in active_buffs:
         expires = ensure_naive(buff.expires_at)
@@ -1143,6 +1237,18 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
         passive_pct += prestige_pct
         cp_pct += prestige_pct
 
+    crit_chance = max(0.0, min(0.95, crit_chance))
+    negative_event_weight_mul = max(
+        0.0,
+        min(1.0, 1.0 - min(NEGATIVE_EVENT_REDUCTION_CAP, max(0.0, negative_event_reduction))),
+    )
+    req_clicks_pct_total = req_clicks_pct + min(REQ_CLICKS_REDUCTION_CAP, max(0.0, req_clicks_pct_boost))
+    req_clicks_pct_total = max(0.0, min(0.95, req_clicks_pct_total))
+    team_discount_pct = max(0.0, min(TEAM_DISCOUNT_CAP, team_discount_pct))
+    shop_discount_pct = max(0.0, min(SHOP_DISCOUNT_CAP, shop_discount_pct))
+    free_order_chance = max(0.0, min(0.95, free_order_chance))
+    combo_cap = max(combo_cap, BOOST_EXTRA_META.get("combo_click", {}).get("combo_cap", 0.0)) if combo_step > 0 else combo_cap
+
     cp = int(round((user.cp_base + cp_add) * (1 + cp_pct)))
     reward_mul_total = 1.0 + user.reward_mul + reward_add + reward_pct
     passive_mul_total = 1.0 + user.passive_mul + passive_add + passive_pct
@@ -1150,10 +1256,24 @@ async def get_user_stats(session: AsyncSession, user: User) -> dict:
         "cp": max(1, cp),
         "reward_mul_total": max(0.0, reward_mul_total),
         "passive_mul_total": max(0.0, passive_mul_total),
-        "req_clicks_pct": max(0.0, req_clicks_pct),
+        "req_clicks_pct": req_clicks_pct_total,
         "ratelimit_plus": ratelimit_plus,
         "xp_pct": max(0.0, xp_pct),
         "prestige_pct": prestige_pct,
+        "crit_chance": crit_chance,
+        "crit_multiplier": max(1.0, crit_multiplier),
+        "team_income_pct": max(0.0, team_income_pct),
+        "free_order_chance": free_order_chance,
+        "team_upgrade_discount_pct": team_discount_pct,
+        "offline_cap_bonus": max(0.0, offline_cap_bonus),
+        "rush_reward_pct": max(0.0, rush_reward_pct),
+        "equipment_eff_pct": max(0.0, equipment_eff_pct),
+        "night_passive_pct": max(0.0, night_passive_pct),
+        "shop_discount_pct": shop_discount_pct,
+        "high_order_reward_pct": max(0.0, high_order_reward_pct),
+        "negative_event_weight_mul": negative_event_weight_mul,
+        "combo_step": max(0.0, combo_step),
+        "combo_cap": max(0.0, combo_cap),
     }
 
 
@@ -1165,7 +1285,15 @@ def team_income_per_min(base_per_min: float, level: int) -> float:
     return base_per_min * (1 + 0.25 * (level - 1))
 
 
-async def calc_passive_income_rate(session: AsyncSession, user: User, passive_mul_total: float) -> float:
+def is_night_now(now: Optional[datetime] = None) -> bool:
+    """Return True if current local time is considered night (22:00-08:00)."""
+
+    now = now or datetime.now()
+    hour = now.hour
+    return hour >= 22 or hour < 8
+
+
+async def calc_passive_income_rate(session: AsyncSession, user: User, stats: Dict[str, Any]) -> float:
     """Return passive income in currency per second accounting for multipliers."""
 
     rows = (
@@ -1176,7 +1304,13 @@ async def calc_passive_income_rate(session: AsyncSession, user: User, passive_mu
         )
     ).all()
     per_min = sum(team_income_per_min(b, lvl) for b, lvl in rows)
-    return (per_min / 60.0) * passive_mul_total
+    team_bonus = 1.0 + stats.get("team_income_pct", 0.0)
+    passive_mul_total = stats.get("passive_mul_total", 1.0)
+    rate = (per_min / 60.0) * passive_mul_total * team_bonus
+    night_bonus = stats.get("night_passive_pct", 0.0)
+    if night_bonus > 0 and is_night_now():
+        rate *= 1.0 + night_bonus
+    return rate
 
 
 async def apply_offline_income(session: AsyncSession, user: User) -> int:
@@ -1185,16 +1319,22 @@ async def apply_offline_income(session: AsyncSession, user: User) -> int:
     now = utcnow()
     last_seen = ensure_naive(user.last_seen) or now
     delta_raw = max(0.0, (now - last_seen).total_seconds())
-    delta = min(delta_raw, MAX_OFFLINE_SECONDS)
+    stats = await get_user_stats(session, user)
+    offline_cap = MAX_OFFLINE_SECONDS + stats.get("offline_cap_bonus", 0.0)
+    delta = min(delta_raw, offline_cap)
     user.last_seen = now
     user.updated_at = now
-    stats = await get_user_stats(session, user)
-    rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
+    rate = await calc_passive_income_rate(session, user, stats)
     amount = int(rate * delta)
     if delta_raw > MAX_OFFLINE_SECONDS:
         logger.info(
             "Offline income capped",
-            extra={"tg_id": user.tg_id, "seconds_raw": int(delta_raw), "seconds_used": int(delta)},
+            extra={
+                "tg_id": user.tg_id,
+                "seconds_raw": int(delta_raw),
+                "seconds_used": int(delta),
+                "cap": int(offline_cap),
+            },
         )
     if amount > 0:
         user.balance += amount
@@ -1278,7 +1418,25 @@ async def add_xp_and_levelup(user: User, xp_gain: int) -> int:
     return lvl - start_level
 
 
-async def pick_random_event(session: AsyncSession, user: User) -> Optional[RandomEvent]:
+def is_negative_event(event: RandomEvent) -> bool:
+    """Heuristic to classify events with penalties."""
+
+    effect = RANDOM_EVENT_EFFECTS.get(event.code, {})
+    if not effect:
+        return False
+    if effect.get("balance", 0) < 0:
+        return True
+    if effect.get("xp", 0) < 0:
+        return True
+    buff = effect.get("buff")
+    if isinstance(buff, dict) and any(val < 0 for val in buff.values()):
+        return True
+    return False
+
+
+async def pick_random_event(
+    session: AsyncSession, user: User, stats: Optional[Dict[str, Any]] = None
+) -> Optional[RandomEvent]:
     """Weighted random selection of event matching user level."""
 
     events = (
@@ -1288,13 +1446,23 @@ async def pick_random_event(session: AsyncSession, user: User) -> Optional[Rando
     ).scalars().all()
     if not events:
         return None
-    total_weight = sum(max(1, e.weight) for e in events)
+    negative_mul = 1.0
+    if stats:
+        negative_mul = stats.get("negative_event_weight_mul", 1.0)
+    weights = []
+    total_weight = 0.0
+    for event in events:
+        weight = float(max(1, event.weight))
+        if is_negative_event(event):
+            weight *= negative_mul
+        weights.append(weight)
+        total_weight += weight
     if total_weight <= 0:
         return None
     pick = random.uniform(0, total_weight)
     upto = 0.0
-    for event in events:
-        upto += max(1, event.weight)
+    for event, weight in zip(events, weights):
+        upto += weight
         if pick <= upto:
             return event
     return events[-1]
@@ -1374,12 +1542,20 @@ async def apply_random_event(session: AsyncSession, user: User, event: RandomEve
     return message
 
 
-async def trigger_random_event(session: AsyncSession, user: User, trigger: str, probability: float) -> Optional[str]:
+async def trigger_random_event(
+    session: AsyncSession,
+    user: User,
+    trigger: str,
+    probability: float,
+    stats: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """Roll random event with probability and return announcement if triggered."""
 
     if random.random() > probability:
         return None
-    event = await pick_random_event(session, user)
+    if stats is None:
+        stats = await get_user_stats(session, user)
+    event = await pick_random_event(session, user, stats)
     if not event:
         return None
     logger.info(
@@ -1943,6 +2119,18 @@ def format_price(value: float) -> str:
     return f"{format_money(value)}{RU.CURRENCY}"
 
 
+def apply_percentage_discount(value: float, pct: float, *, cap: Optional[float] = None) -> int:
+    """Return integer price after applying percentage discount with optional cap."""
+
+    if cap is not None:
+        pct = min(pct, cap)
+    pct = max(0.0, min(0.99, pct))
+    discounted = int(round(value * (1 - pct)))
+    if value <= 0:
+        return int(round(value))
+    return max(1, discounted)
+
+
 def format_stat(value: float) -> str:
     """Format numeric stat values without trailing zeros."""
 
@@ -2329,12 +2517,37 @@ async def handle_click(message: Message, state: FSMContext):
             )
             return
         stats = await get_user_stats(session, user)
-        cp = stats["cp"]
+        base_cp = float(stats["cp"])
+        combo_step = stats.get("combo_step", 0.0)
+        combo_cap = stats.get("combo_cap", 0.0)
+        combo_bonus = 0.0
+        if combo_step > 0 and combo_cap > 0:
+            tracker = _combo_states.get(user.id)
+            now_ts = time.monotonic()
+            if tracker and now_ts - tracker.last_ts <= COMBO_RESET_SECONDS:
+                tracker.bonus = min(combo_cap, tracker.bonus + combo_step)
+                tracker.last_ts = now_ts
+            else:
+                tracker = ComboTracker(bonus=0.0, last_ts=now_ts)
+            _combo_states[user.id] = tracker
+            combo_bonus = tracker.bonus
+        else:
+            _combo_states.pop(user.id, None)
+        cp_effective = base_cp + combo_bonus
+        crit_triggered = False
+        crit_chance = stats.get("crit_chance", 0.0)
+        crit_multiplier = stats.get("crit_multiplier", 1.0)
+        if crit_chance > 0 and random.random() < crit_chance:
+            cp_effective *= crit_multiplier
+            crit_triggered = True
+        cp = max(1, int(round(cp_effective)))
         user.clicks_total += cp
         achievements.extend(await evaluate_achievements(session, user, {"clicks"}))
         event_message: Optional[str] = None
         if user.clicks_total % RANDOM_EVENT_CLICK_INTERVAL == 0:
-            event_message = await trigger_random_event(session, user, "click", RANDOM_EVENT_CLICK_PROB)
+            event_message = await trigger_random_event(
+                session, user, "click", RANDOM_EVENT_CLICK_PROB, stats
+            )
         prev = active.progress_clicks
         active.progress_clicks = min(active.required_clicks, active.progress_clicks + cp)
         if (active.progress_clicks // 10) > (prev // 10) or active.progress_clicks == active.required_clicks:
@@ -2343,23 +2556,47 @@ async def handle_click(message: Message, state: FSMContext):
                 RU.CLICK_PROGRESS.format(cur=active.progress_clicks, req=active.required_clicks, pct=pct),
                 reply_markup=kb_active_order_controls(),
             )
+        if crit_triggered:
+            await message.answer(
+                f"💥 Критический клик! ×{format_stat(crit_multiplier)}", reply_markup=kb_active_order_controls()
+            )
         if active.progress_clicks >= active.required_clicks:
-            reward = finish_order_reward(active.required_clicks, active.reward_snapshot_mul)
+            order_entity = await session.scalar(select(Order).where(Order.id == active.order_id))
+            reward_base = finish_order_reward(active.required_clicks, active.reward_snapshot_mul)
+            reward = reward_base
+            high_bonus_pct = 0.0
+            if order_entity and order_entity.min_level >= HIGH_ORDER_MIN_LEVEL:
+                high_bonus_pct = stats.get("high_order_reward_pct", 0.0)
+                if high_bonus_pct > 0:
+                    reward = int(round(reward * (1 + high_bonus_pct)))
             xp_gain_base = int(round(active.required_clicks * 0.1))
             xp_gain = int(round(xp_gain_base * (1 + stats.get("xp_pct", 0.0))))
             now = utcnow()
+            rush_bonus_pct = stats.get("rush_reward_pct", 0.0)
+            rush_applied = False
+            if rush_bonus_pct > 0:
+                started_at = ensure_naive(active.started_at) or now
+                elapsed = max(0.0, (now - started_at).total_seconds())
+                if elapsed <= FAST_ORDER_SECONDS:
+                    reward = int(round(reward * (1 + rush_bonus_pct)))
+                    rush_applied = True
             user.balance += reward
             user.orders_completed += 1
             prev_level = user.level
             levels_gained = await add_xp_and_levelup(user, xp_gain)
             user.updated_at = now
             active.finished = True
+            reward_meta: Dict[str, Any] = {"order_id": active.order_id}
+            if high_bonus_pct > 0:
+                reward_meta["high_order_bonus"] = round(high_bonus_pct, 4)
+            if rush_applied:
+                reward_meta["rush_bonus"] = round(rush_bonus_pct, 4)
             session.add(
                 EconomyLog(
                     user_id=user.id,
                     type="order_finish",
                     amount=reward,
-                    meta={"order_id": active.order_id},
+                    meta=reward_meta,
                     created_at=now,
                 )
             )
@@ -2374,7 +2611,6 @@ async def handle_click(message: Message, state: FSMContext):
             )
             menu_markup = await main_menu_for_message(message, session=session, user=user)
             await message.answer(RU.ORDER_DONE.format(rub=reward, xp=xp_gain), reply_markup=menu_markup)
-            order_entity = await session.scalar(select(Order).where(Order.id == active.order_id))
             await update_campaign_progress(
                 session,
                 user,
@@ -2382,7 +2618,9 @@ async def handle_click(message: Message, state: FSMContext):
                 {"order_min_level": order_entity.min_level if order_entity else 0},
             )
             await maybe_prompt_skill_choice(session, message, state, user, prev_level, levels_gained)
-            event_order = await trigger_random_event(session, user, "order_finish", RANDOM_EVENT_ORDER_PROB)
+            event_order = await trigger_random_event(
+                session, user, "order_finish", RANDOM_EVENT_ORDER_PROB, stats
+            )
             if event_order:
                 await message.answer(event_order, reply_markup=menu_markup)
             achievements.extend(await evaluate_achievements(session, user, {"orders", "level", "balance"}))
@@ -2561,11 +2799,20 @@ async def take_order(message: Message, state: FSMContext):
             await state.clear()
             return
         stats = await get_user_stats(session, user)
+        initial_progress = 0
+        free_chance = stats.get("free_order_chance", 0.0)
+        free_triggered = False
+        if free_chance > 0 and random.random() < free_chance:
+            initial_progress = min(
+                req,
+                max(1, int(round(req * FREE_ORDER_PROGRESS_PCT))),
+            )
+            free_triggered = initial_progress > 0
         session.add(
             UserOrder(
                 user_id=user.id,
                 order_id=order_id,
-                progress_clicks=0,
+                progress_clicks=initial_progress,
                 required_clicks=req,
                 started_at=utcnow(),
                 finished=False,
@@ -2579,6 +2826,11 @@ async def take_order(message: Message, state: FSMContext):
             await message.answer(
                 RU.ORDER_TAKEN.format(title=order.title), reply_markup=kb_active_order_controls()
             )
+            if free_triggered:
+                await message.answer(
+                    f"📦 Бесплатный старт! Прогресс: {initial_progress}/{req}",
+                    reply_markup=kb_active_order_controls(),
+                )
         logger.info(
             "Order taken",
             extra={"tg_id": user.tg_id, "user_id": user.id, "order_id": order_id},
@@ -2636,10 +2888,31 @@ def _boost_display(boost: Boost) -> Tuple[str, str, str]:
     step = boost.step_value
     if boost.type == "cp":
         effect = f"+{int(round(step))} {suffix}"
-    elif boost.type in {"reward", "passive"}:
+    elif boost.type in {"reward", "passive", "xp", "team_income", "rush_reward", "equipment_eff", "night_passive", "high_order_reward"}:
         effect = f"+{int(round(step * 100))}% {suffix}"
-    else:
+    elif boost.type == "crit":
+        extra = BOOST_EXTRA_META.get(boost.code, {})
+        multiplier = extra.get("crit_multiplier", 1.5)
+        effect = f"+{int(round(step * 100))}% шанс, ×{format_stat(multiplier)} крит"
+    elif boost.type == "event_protection":
+        effect = f"−{int(round(step * 100))}% к негативу"
+    elif boost.type == "combo":
+        effect = f"+{format_stat(step)} {suffix}"
+    elif boost.type == "ratelimit":
         effect = f"+{int(round(step))} {suffix}"
+    elif boost.type == "req_clicks":
+        effect = f"−{int(round(step * 100))}% {suffix}"
+    elif boost.type == "free_order":
+        effect = f"+{int(round(step * 100))}% {suffix}"
+    elif boost.type == "team_discount":
+        effect = f"−{int(round(step * 100))}% {suffix}"
+    elif boost.type == "offline_cap":
+        hours = step / 3600.0
+        effect = f"+{format_stat(hours)} ч {suffix}"
+    elif boost.type == "shop_discount":
+        effect = f"−{int(round(step * 100))}% {suffix}"
+    else:
+        effect = f"+{format_stat(step)} {suffix}"
     return icon, label or boost.name, effect
 
 
@@ -2696,7 +2969,7 @@ def format_boost_purchase_prompt(
     )
 
 
-def format_item_purchase_prompt(item: Item) -> str:
+def format_item_purchase_prompt(item: Item, price: int) -> str:
     """Pretty confirmation text for buying an equipment piece."""
 
     icon = _item_icon(item)
@@ -2704,7 +2977,7 @@ def format_item_purchase_prompt(item: Item) -> str:
     return (
         f"{icon} Покупка «{item.name}»\n"
         f"Эффект: {effect}\n"
-        f"Цена: {format_price(item.price)}"
+        f"Цена: {format_price(price)}"
     )
 
 
@@ -2871,7 +3144,14 @@ async def shop_cancel_boost(message: Message, state: FSMContext):
 
 # --- Магазин: экипировка ---
 
-def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool = True) -> str:
+def fmt_items(
+    user: User,
+    items: List[Item],
+    page: int,
+    *,
+    include_price: bool = True,
+    discount_pct: float = 0.0,
+) -> str:
     """Format equipment listings with balance, icons and effects."""
 
     lines: List[str] = []
@@ -2889,7 +3169,10 @@ def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool =
         effect = _format_item_effect(it)
         entry = f"{start_index + offset}. {icon} {it.name} — {effect}"
         if include_price:
-            entry = f"{entry} · {format_price(it.price)}"
+            price = it.price
+            if discount_pct > 0:
+                price = apply_percentage_discount(price, discount_pct, cap=SHOP_DISCOUNT_CAP)
+            entry = f"{entry} · {format_price(price)}"
         lines.append(entry)
     return "\n".join(lines)
 
@@ -2902,11 +3185,18 @@ async def render_items(message: Message, state: FSMContext):
             return
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
+        stats = await get_user_stats(session, user)
         items = await get_next_items_for_user(session, user)
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(items, page, 5)
         await message.answer(
-            fmt_items(user, sub, page, include_price=True),
+            fmt_items(
+                user,
+                sub,
+                page,
+                include_price=True,
+                discount_pct=stats.get("shop_discount_pct", 0.0),
+            ),
             reply_markup=kb_numeric_page(has_prev, has_next),
         )
         await state.update_data(item_ids=[it.id for it in sub], page=page)
@@ -2939,7 +3229,10 @@ async def shop_choose_item(message: Message, state: FSMContext):
             await message.answer("Предмет не найден.")
             await render_items(message, state)
             return
-        prompt = format_item_purchase_prompt(it)
+        stats = await get_user_stats(session, user)
+        discount_pct = stats.get("shop_discount_pct", 0.0)
+        price = apply_percentage_discount(it.price, discount_pct, cap=SHOP_DISCOUNT_CAP)
+        prompt = format_item_purchase_prompt(it, price)
         await message.answer(prompt, reply_markup=kb_confirm(RU.BTN_BUY))
     await state.set_state(ShopState.confirm_item)
     await state.update_data(item_id=item_id)
@@ -2978,23 +3271,26 @@ async def shop_buy_item(message: Message, state: FSMContext):
             await state.set_state(ShopState.equipment)
             await render_items(message, state)
             return
+        stats = await get_user_stats(session, user)
+        discount_pct = stats.get("shop_discount_pct", 0.0)
+        price = apply_percentage_discount(item.price, discount_pct, cap=SHOP_DISCOUNT_CAP)
         has = await session.scalar(
             select(UserItem).where(UserItem.user_id == user.id, UserItem.item_id == item_id)
         )
         if has:
             await message.answer("Уже куплено.")
-        elif user.balance < item.price:
+        elif user.balance < price:
             await message.answer(RU.INSUFFICIENT_FUNDS)
         else:
             now = utcnow()
-            user.balance -= item.price
+            user.balance -= price
             user.updated_at = now
             session.add(UserItem(user_id=user.id, item_id=item_id))
             session.add(
                 EconomyLog(
                     user_id=user.id,
                     type="buy_item",
-                    amount=-item.price,
+                    amount=-price,
                     meta={"item": item.code},
                     created_at=now,
                 )
@@ -3053,6 +3349,7 @@ async def render_team(message: Message, state: FSMContext):
             return
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
+        stats = await get_user_stats(session, user)
         members_all = (
             await session.execute(select(TeamMember).order_by(TeamMember.base_cost, TeamMember.id))
         ).scalars().all()
@@ -3073,7 +3370,12 @@ async def render_team(message: Message, state: FSMContext):
                 )
             ).all()
         }
-        costs = {m.id: int(round(m.base_cost * (1.22 ** max(0, levels.get(m.id, 0))))) for m in members}
+        discount_pct = stats.get("team_upgrade_discount_pct", 0.0)
+        costs = {}
+        for m in members:
+            lvl = max(0, levels.get(m.id, 0))
+            base_cost = m.base_cost * (1.22 ** lvl)
+            costs[m.id] = apply_percentage_discount(base_cost, discount_pct, cap=TEAM_DISCOUNT_CAP)
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(members, page, 5)
         await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
@@ -3157,11 +3459,15 @@ async def team_upgrade(message: Message, state: FSMContext):
             await state.set_state(TeamState.browsing)
             await render_team(message, state)
             return
+        stats = await get_user_stats(session, user)
         team_entry = await session.scalar(
             select(UserTeam).where(UserTeam.user_id == user.id, UserTeam.member_id == mid)
         )
         lvl = team_entry.level if team_entry else 0
-        cost = int(round(member.base_cost * (1.22 ** lvl)))
+        discount_pct = stats.get("team_upgrade_discount_pct", 0.0)
+        cost = apply_percentage_discount(
+            member.base_cost * (1.22 ** lvl), discount_pct, cap=TEAM_DISCOUNT_CAP
+        )
         if user.balance < cost:
             await message.answer(RU.INSUFFICIENT_FUNDS)
         else:
@@ -3351,7 +3657,7 @@ async def profile_show(message: Message, state: FSMContext):
         achievements: List[Tuple[Achievement, UserAchievement]] = []
         await process_offline_income(session, user, achievements)
         stats = await get_user_stats(session, user)
-        rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
+        rate = await calc_passive_income_rate(session, user, stats)
         active = await get_active_order(session, user)
         avg_income = await fetch_user_average_income(session, user.id)
         display_name = user.first_name or message.from_user.full_name or f"Игрок {user.id}"
