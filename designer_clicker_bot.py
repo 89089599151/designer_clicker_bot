@@ -217,14 +217,11 @@ class RU:
     DAILY_OK = "🎁 Начислен ежедневный бонус: {rub} ₽."
     DAILY_WAIT = "⏰ Бонус уже получен. Загляните позже."
     PROFILE = (
-        "👤 Профиль: {name}\n"
-        "🏅 Уровень: {lvl}\n"
-        "✨ XP: {xp}/{xp_need}\n"
-        "💰 Баланс: {rub} ₽\n"
-        "📈 Средний доход: {avg} ₽\n"
-        "🖱️ Сила клика: {cp}\n"
-        "💤 Пассивный доход: {pm}/мин\n"
-        "📌 Текущий заказ: {order}\n"
+        "🧑‍💼 {name} · 🏅 Ур. {lvl}\n"
+        "✨ XP: {xp}/{xp_need} {xp_bar} {xp_pct}%\n"
+        "💰 Баланс: {rub} ₽ · 📈 Ср. доход: {avg} ₽\n"
+        "🖱️ Сила клика: {cp} · 💤 Пассив: {passive}/мин\n"
+        "📌 Заказ: {order}\n"
         "🛡️ Баффы: {buffs}\n"
         "📜 Кампания: {campaign}\n"
         "🏢 Репутация: {rep}"
@@ -233,7 +230,7 @@ class RU:
     TEAM_LOCKED = "🧑‍🤝‍🧑 Команда откроется со 2 уровня."
     SHOP_HEADER = "🛒 Магазин: выберите раздел для прокачки."
     WARDROBE_HEADER = "🎽 Гардероб: слоты и доступные предметы."
-    ORDERS_HEADER = "📋 Доступные заказы (введите номер для выбора):"
+    ORDERS_HEADER = "📋 Доступные заказы"
     UPGRADES_HEADER = "🛠️ Улучшения: выберите раздел."
     STATS_HEADER = "🏆 Топ-5 по среднему доходу"
     STATS_ROW = "{idx}. Игрок: {name} — {value} ₽"
@@ -1946,6 +1943,75 @@ def format_price(value: float) -> str:
     return f"{format_money(value)}{RU.CURRENCY}"
 
 
+def format_stat(value: float) -> str:
+    """Format numeric stat values without trailing zeros."""
+
+    if abs(value - round(value)) < 1e-6:
+        return str(int(round(value)))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def render_progress_bar(
+    current: float,
+    total: float,
+    *,
+    length: int = 10,
+    filled_char: str = "▰",
+    empty_char: str = "▱",
+) -> str:
+    """Render a textual progress bar with the requested symbols."""
+
+    if length <= 0:
+        return ""
+    if total <= 0:
+        ratio = 1.0 if current > 0 else 0.0
+    else:
+        ratio = max(0.0, min(1.0, current / total))
+    filled = int(round(ratio * length))
+    if filled == 0 and ratio > 0.0:
+        filled = 1
+    filled = max(0, min(length, filled))
+    return f"{filled_char * filled}{empty_char * (length - filled)}"
+
+
+def percentage(current: float, total: float) -> int:
+    """Return percentage progress for the given values."""
+
+    if total <= 0:
+        return 100 if current > 0 else 0
+    return int(max(0.0, min(100.0, round((current / total) * 100))))
+
+
+def circled_number(idx: int) -> str:
+    """Return circled unicode digit for indices 1..20, fallback to regular digits."""
+
+    if 1 <= idx <= 20:
+        return chr(0x245F + idx)  # 0x2460 is 1, hence +idx then -1 via constant.
+    return str(idx)
+
+
+ORDER_ICON_KEYWORDS: Tuple[Tuple[str, str], ...] = (
+    ("визит", "💳"),
+    ("логотип", "🎨"),
+    ("облож", "🖼️"),
+    ("баннер", "🪧"),
+    ("сайт", "💻"),
+    ("пост", "📢"),
+    ("фирмен", "🏢"),
+    ("презента", "📊"),
+)
+
+
+def pick_order_icon(title: str) -> str:
+    """Pick a representative emoji for an order title."""
+
+    lower = title.lower()
+    for keyword, icon in ORDER_ICON_KEYWORDS:
+        if keyword in lower:
+            return icon
+    return "📝"
+
+
 async def fetch_average_income_rows(session: AsyncSession) -> List[Tuple[int, str, float]]:
     """Return per-user average income composed of passive and active totals."""
 
@@ -2373,9 +2439,11 @@ async def resume_order_work(message: Message):
 # --- Заказы ---
 
 def fmt_orders(orders: List[Order]) -> str:
-    lines = [RU.ORDERS_HEADER, ""]
+    lines = [RU.ORDERS_HEADER, "Введите номер для выбора:", ""]
     for i, o in enumerate(orders, 1):
-        lines.append(f"[{i}] {o.title} — мин. ур. {o.min_level}")
+        lines.append(
+            f"{circled_number(i)} {pick_order_icon(o.title)} {o.title} — мин. ур. {o.min_level}"
+        )
     return "\n".join(lines)
 
 
@@ -3287,36 +3355,57 @@ async def profile_show(message: Message, state: FSMContext):
         active = await get_active_order(session, user)
         avg_income = await fetch_user_average_income(session, user.id)
         display_name = user.first_name or message.from_user.full_name or f"Игрок {user.id}"
-        order_str = "нет"
+        order_str = "нет активных заказов"
         if active:
             ord_row = await session.scalar(select(Order).where(Order.id == active.order_id))
             if ord_row:
-                order_str = f"{ord_row.title}: {active.progress_clicks}/{active.required_clicks}"
+                order_bar = render_progress_bar(active.progress_clicks, active.required_clicks)
+                order_str = (
+                    f"{ord_row.title} — {active.progress_clicks}/{active.required_clicks} {order_bar}"
+                )
         now = utcnow()
         buffs = (
             await session.execute(
                 select(UserBuff).where(UserBuff.user_id == user.id, UserBuff.expires_at > now)
             )
         ).scalars().all()
-        buffs_text = ", ".join(f"{buff.title}" for buff in buffs) if buffs else "нет"
+        buffs_text = (
+            ", ".join(
+                f"{buff.title} до {ensure_naive(buff.expires_at).strftime('%H:%M')}"
+                for buff in buffs
+            )
+            if buffs
+            else "нет"
+        )
         campaign = await get_campaign_progress_entry(session, user)
         definition = get_campaign_definition(campaign.chapter)
         if definition:
-            pct = int(campaign_goal_progress(definition.get("goal", {}), campaign.progress or {}) * 100)
-            campaign_text = f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}%"
+            pct = percentage(
+                campaign_goal_progress(definition.get("goal", {}), campaign.progress or {}),
+                1.0,
+            )
+            status_icon = "✅" if pct >= 100 else ""
+            campaign_text = (
+                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}% {status_icon}"
+            ).strip()
         else:
-            campaign_text = "все главы"
+            campaign_text = "все главы — 100% ✅"
         prestige = await get_prestige_entry(session, user)
-        xp_need = xp_to_level(user.level)
+        xp_need = max(1, xp_to_level(user.level))
+        xp_pct = percentage(user.xp, xp_need)
+        xp_bar = render_progress_bar(user.xp, xp_need)
+        passive_per_min = format_money(rate * 60)
         text = RU.PROFILE.format(
             name=display_name,
             lvl=user.level,
             xp=user.xp,
             xp_need=xp_need,
+            xp_bar=xp_bar,
+            xp_pct=xp_pct,
             rub=format_money(user.balance),
             avg=format_money(avg_income),
-            cp=stats["cp"],
-            pm=int(rate * 60),
+            cp=format_stat(stats["cp"]),
+            passive=f"{passive_per_min} ₽",
             order=order_str,
             buffs=buffs_text,
             campaign=campaign_text,
@@ -3507,14 +3596,19 @@ async def show_achievements(message: Message):
     if not rows:
         await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=markup)
         return
-    lines = [RU.ACHIEVEMENTS_TITLE, ""]
+    lines = [RU.ACHIEVEMENTS_TITLE]
     for ach, ua in rows:
         unlocked = bool(ua and ua.unlocked_at)
-        progress = ua.progress if ua else 0
-        status = "выполнено" if unlocked else f"{progress}/{ach.threshold}"
-        icon = ach.icon if unlocked else "⬜"
-        desc = f"{ach.description} — {status}"
-        lines.append(RU.ACHIEVEMENTS_ENTRY.format(icon=icon, name=ach.name, desc=desc))
+        current = ua.progress if ua else 0
+        target = max(1, ach.threshold)
+        if unlocked:
+            current = max(current, target)
+        pct = percentage(current, target)
+        bar = render_progress_bar(current, target, filled_char="█", empty_char="░")
+        status_icon = "✅" if unlocked else "⬜️"
+        lines.append(
+            f"{status_icon} {ach.icon} {ach.name} — [{bar}] {pct}% · {current}/{target}"
+        )
     await message.answer("\n".join(lines), reply_markup=markup)
 
 
