@@ -165,13 +165,12 @@ class RU:
     BTN_TEAM = "🧑‍🤝‍🧑 Команда"
     BTN_WARDROBE = "🎽 Гардероб"
     BTN_PROFILE = "👤 Профиль"
-    BTN_STATS = "📊 Статистика"
+    BTN_STATS = "🏆 Топ"
     BTN_ACHIEVEMENTS = "🏆 Достижения"
     BTN_CAMPAIGN = "📜 Кампания"
     BTN_SKILLS = "🎯 Навыки"
     BTN_QUEST = "😈 Квест"
     BTN_STUDIO = "🏢 Студия"
-    BTN_TOP = "🏆 Топ"
 
     # Общие
     BTN_MENU = "🏠 Меню"
@@ -196,8 +195,6 @@ class RU:
     BTN_SHOW_ACHIEVEMENTS = "🏆 Посмотреть достижения"
     BTN_CAMPAIGN_CLAIM = "🎁 Забрать награду"
     BTN_STUDIO_CONFIRM = "✨ Открыть студию"
-    BTN_TOP_BALANCE = "💰 Баланс"
-    BTN_TOP_LEVEL = "🏅 Уровни"
 
     # Сообщения
     BOT_STARTED = "Бот запущен."
@@ -220,9 +217,11 @@ class RU:
     DAILY_OK = "🎁 Начислен ежедневный бонус: {rub} ₽."
     DAILY_WAIT = "⏰ Бонус уже получен. Загляните позже."
     PROFILE = (
-        "👤 Профиль\n"
-        "🏅 Уровень: {lvl}\n✨ XP: {xp}/{xp_need}\n"
+        "👤 Профиль: {name}\n"
+        "🏅 Уровень: {lvl}\n"
+        "✨ XP: {xp}/{xp_need}\n"
         "💰 Баланс: {rub} ₽\n"
+        "📈 Средний доход: {avg} ₽\n"
         "🖱️ Сила клика: {cp}\n"
         "💤 Пассивный доход: {pm}/мин\n"
         "📌 Текущий заказ: {order}\n"
@@ -236,18 +235,17 @@ class RU:
     WARDROBE_HEADER = "🎽 Гардероб: слоты и доступные предметы."
     ORDERS_HEADER = "📋 Доступные заказы (введите номер для выбора):"
     UPGRADES_HEADER = "🛠️ Улучшения: выберите раздел."
-    STATS_HEADER = "📊 Средний доход игроков"
-    STATS_ROW = "{idx}. Игрок: {name} — Средний доход: {value} ₽"
+    STATS_HEADER = "🏆 Топ-5 по среднему доходу"
+    STATS_ROW = "{idx}. Игрок: {name} — {value} ₽"
     STATS_EMPTY_ROW = "{idx}. Отсутствует"
     STATS_POSITION = "📈 Ваше место: {rank} из {total}"
+    STATS_POSITION_MISSING = "📈 Вы не в рейтинге"
     ACHIEVEMENT_UNLOCK = "🏆 Новое достижение: {title}!"
     ACHIEVEMENTS_TITLE = "🏆 Достижения"
     ACHIEVEMENTS_EMPTY = "Пока нет достижений — продолжайте играть!"
     ACHIEVEMENTS_ENTRY = "{icon} {name} — {desc}"
     TUTORIAL_DONE = "🎓 Обучение завершено! Нажмите кнопку в меню, чтобы продолжить."
     TUTORIAL_HINT = "⚡ Готовы начать играть? Нажмите «{button}» внизу."
-    STATS_ROW = "• {label}: {value}"
-    STATS_NO_DATA = "Данных пока недостаточно."
     EVENT_POSITIVE = "{title}"
     EVENT_NEGATIVE = "{title}"
     EVENT_BUFF = "{title}"
@@ -271,11 +269,6 @@ class RU:
     STUDIO_INFO = "🏢 Репутация: {rep}\nПовторные открытия: {resets}\nБонус дохода: +{bonus}%"
     STUDIO_CONFIRM = "Сбросить прогресс и открыть студию? Получите +{gain} репутации."
     STUDIO_DONE = "✨ Вы открыли студию! Репутация выросла на {gain}."
-    TOP_HEADER = "🏆 Таблица лидеров"
-    TOP_BALANCE = "💰 По балансу:\n{rows}"
-    TOP_LEVEL = "🏅 По уровню:\n{rows}"
-    TOP_ROW = "{idx}. {name} — {value}"
-    TOP_EMPTY = "Пока никто не попал в топ."
 
     # Форматирование
     CURRENCY = "₽"
@@ -345,11 +338,9 @@ def kb_shop_menu() -> ReplyKeyboardMarkup:
 
 def kb_profile_menu(has_active_order: bool) -> ReplyKeyboardMarkup:
     rows: List[List[str]] = [[RU.BTN_DAILY, RU.BTN_SKILLS]]
-    if has_active_order:
-        rows[0].append(RU.BTN_CANCEL_ORDER)
+    _ = has_active_order  # Signature kept for compatibility with legacy callers.
     rows.append([RU.BTN_STATS, RU.BTN_ACHIEVEMENTS])
     rows.append([RU.BTN_CAMPAIGN, RU.BTN_STUDIO])
-    rows.append([RU.BTN_TOP])
     rows.append([RU.BTN_BACK])
     return _reply_keyboard(rows)
 
@@ -1931,18 +1922,33 @@ async def notify_new_achievements(
         ua.notified = True
 
 
+def _income_components() -> Tuple[Any, Any]:
+    """Utility to build CASE sums for passive and active income aggregation."""
+
+    passive_sum = func.sum(
+        case((EconomyLog.type == "passive", EconomyLog.amount), else_=0.0)
+    )
+    active_sum = func.sum(
+        case((EconomyLog.type == "order_finish", EconomyLog.amount), else_=0.0)
+    )
+    return passive_sum, active_sum
+
+
+def format_money(value: float) -> str:
+    """Format ruble values with spaces as thousands separators."""
+
+    return f"{int(round(value)):,}".replace(",", " ")
+
+
 async def fetch_average_income_rows(session: AsyncSession) -> List[Tuple[int, str, float]]:
     """Return per-user average income composed of passive and active totals."""
 
+    passive_sum, active_sum = _income_components()
     income_agg = (
         select(
             EconomyLog.user_id.label("user_id"),
-            func.sum(
-                case((EconomyLog.type == "passive", EconomyLog.amount), else_=0.0)
-            ).label("passive_total"),
-            func.sum(
-                case((EconomyLog.type == "order_finish", EconomyLog.amount), else_=0.0)
-            ).label("active_total"),
+            passive_sum.label("passive_total"),
+            active_sum.label("active_total"),
         )
         .group_by(EconomyLog.user_id)
         .subquery()
@@ -1969,24 +1975,20 @@ async def fetch_average_income_rows(session: AsyncSession) -> List[Tuple[int, st
     return result
 
 
-async def fetch_leaderboards(session: AsyncSession) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]]]:
-    top_balance = (
-        await session.execute(
-            select(User.first_name, User.balance)
-            .order_by(User.balance.desc())
-            .limit(5)
-        )
-    ).all()
-    top_level = (
-        await session.execute(
-            select(User.first_name, User.level)
-            .order_by(User.level.desc())
-            .limit(5)
-        )
-    ).all()
-    return [(name or "Игрок", int(value)) for name, value in top_balance], [
-        (name or "Игрок", int(value)) for name, value in top_level
-    ]
+async def fetch_user_average_income(session: AsyncSession, user_id: int) -> float:
+    """Calculate a single user's combined passive and active income."""
+
+    passive_sum, active_sum = _income_components()
+    row = await session.execute(
+        select(
+            func.coalesce(passive_sum, 0.0),
+            func.coalesce(active_sum, 0.0),
+        ).where(EconomyLog.user_id == user_id)
+    )
+    passive_total, active_total = row.one()
+    return float(passive_total or 0.0) + float(active_total or 0.0)
+
+
 # ----------------------------------------------------------------------------
 # Анти-флуд (middleware)
 # ----------------------------------------------------------------------------
@@ -3150,6 +3152,8 @@ async def profile_show(message: Message, state: FSMContext):
         stats = await get_user_stats(session, user)
         rate = await calc_passive_income_rate(session, user, stats["passive_mul_total"])
         active = await get_active_order(session, user)
+        avg_income = await fetch_user_average_income(session, user.id)
+        display_name = user.first_name or message.from_user.full_name or f"Игрок {user.id}"
         order_str = "нет"
         if active:
             ord_row = await session.scalar(select(Order).where(Order.id == active.order_id))
@@ -3172,10 +3176,12 @@ async def profile_show(message: Message, state: FSMContext):
         prestige = await get_prestige_entry(session, user)
         xp_need = xp_to_level(user.level)
         text = RU.PROFILE.format(
+            name=display_name,
             lvl=user.level,
             xp=user.xp,
             xp_need=xp_need,
-            rub=user.balance,
+            rub=format_money(user.balance),
+            avg=format_money(avg_income),
             cp=stats["cp"],
             pm=int(rate * 60),
             order=order_str,
@@ -3320,23 +3326,24 @@ async def show_global_stats(message: Message):
         active = await get_active_order(session, user)
         await notify_new_achievements(message, achievements)
     markup = kb_profile_menu(has_active_order=bool(active))
-    if not rows:
-        await message.answer(RU.STATS_NO_DATA, reply_markup=markup)
-        return
     ordered = sorted(rows, key=lambda entry: entry[2], reverse=True)
     total_players = len(ordered)
     lines = [RU.STATS_HEADER, ""]
     for idx in range(1, 6):
         if idx <= total_players:
             _, name, income = ordered[idx - 1]
-            lines.append(
-                RU.STATS_ROW.format(idx=idx, name=name, value=f"{int(round(income)):,}".replace(",", " "))
-            )
+            lines.append(RU.STATS_ROW.format(idx=idx, name=name, value=format_money(income)))
         else:
             lines.append(RU.STATS_EMPTY_ROW.format(idx=idx))
-    player_rank = next((idx for idx, (uid, _, _) in enumerate(ordered, start=1) if uid == user.id), total_players + 1)
+    player_rank = next(
+        (idx for idx, (uid, _, _) in enumerate(ordered, start=1) if uid == user.id),
+        None,
+    )
     lines.append("")
-    lines.append(RU.STATS_POSITION.format(rank=player_rank, total=total_players))
+    if player_rank is not None:
+        lines.append(RU.STATS_POSITION.format(rank=player_rank, total=total_players or 1))
+    else:
+        lines.append(RU.STATS_POSITION_MISSING)
     await message.answer("\n".join(lines), reply_markup=markup)
 
 
@@ -3500,45 +3507,6 @@ async def cancel_studio(message: Message, state: FSMContext):
         user = await get_user_by_tg(session, message.from_user.id)
         markup = await main_menu_for_message(message, session=session, user=user)
     await message.answer(RU.MENU_HINT, reply_markup=markup)
-
-
-@router.message(Command("top"))
-@router.message(F.text == RU.BTN_TOP)
-@safe_handler
-async def show_leaderboard(message: Message):
-    async with session_scope() as session:
-        user = await ensure_user_loaded(session, message)
-        if not user:
-            return
-        achievements: List[Tuple[Achievement, UserAchievement]] = []
-        await process_offline_income(session, user, achievements)
-        top_balance, top_level = await fetch_leaderboards(session)
-        await notify_new_achievements(message, achievements)
-    markup = await build_main_menu_markup(tg_id=message.from_user.id)
-    if not top_balance and not top_level:
-        await message.answer(RU.TOP_EMPTY, reply_markup=markup)
-        return
-    bal_lines = [
-        RU.TOP_BALANCE.format(
-            rows="\n".join(
-                RU.TOP_ROW.format(idx=i + 1, name=name, value=f"{value} {RU.CURRENCY}")
-                for i, (name, value) in enumerate(top_balance)
-            )
-            if top_balance
-            else RU.TOP_EMPTY
-        )
-    ]
-    lvl_lines = [
-        RU.TOP_LEVEL.format(
-            rows="\n".join(
-                RU.TOP_ROW.format(idx=i + 1, name=name, value=value)
-                for i, (name, value) in enumerate(top_level)
-            )
-            if top_level
-            else RU.TOP_EMPTY
-        )
-    ]
-    await message.answer("\n\n".join(bal_lines + lvl_lines), reply_markup=markup)
 
 
 @router.message(SkillsState.picking)
