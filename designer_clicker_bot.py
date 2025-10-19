@@ -839,26 +839,26 @@ SEED_TEAM = [
 ]
 
 SEED_ITEMS = [
-    {"code": "laptop_t1", "name": "Ноутбук T1", "slot": "laptop", "tier": 1, "bonus_type": "cp_pct", "bonus_value": 0.05, "price": 250, "min_level": 1},
-    {"code": "laptop_t2", "name": "Ноутбук T2", "slot": "laptop", "tier": 2, "bonus_type": "cp_pct", "bonus_value": 0.10, "price": 500, "min_level": 2},
-    {"code": "laptop_t3", "name": "Ноутбук T3", "slot": "laptop", "tier": 3, "bonus_type": "cp_pct", "bonus_value": 0.15, "price": 900, "min_level": 3},
+    {"code": "laptop_t1", "name": "Ноутбук «NeoBook»", "slot": "laptop", "tier": 1, "bonus_type": "cp_pct", "bonus_value": 0.05, "price": 250, "min_level": 1},
+    {"code": "laptop_t2", "name": "Ноутбук «PixelForge»", "slot": "laptop", "tier": 2, "bonus_type": "cp_pct", "bonus_value": 0.10, "price": 500, "min_level": 2},
+    {"code": "laptop_t3", "name": "Ноутбук «Aurora Pro»", "slot": "laptop", "tier": 3, "bonus_type": "cp_pct", "bonus_value": 0.15, "price": 900, "min_level": 3},
 
-    {"code": "phone_t1", "name": "Смартфон T1", "slot": "phone", "tier": 1, "bonus_type": "passive_pct", "bonus_value": 0.03, "price": 200, "min_level": 1},
-    {"code": "phone_t2", "name": "Смартфон T2", "slot": "phone", "tier": 2, "bonus_type": "passive_pct", "bonus_value": 0.06, "price": 400, "min_level": 2},
-    {"code": "phone_t3", "name": "Смартфон T3", "slot": "phone", "tier": 3, "bonus_type": "passive_pct", "bonus_value": 0.10, "price": 750, "min_level": 3},
+    {"code": "phone_t1", "name": "Смартфон «City Lite»", "slot": "phone", "tier": 1, "bonus_type": "passive_pct", "bonus_value": 0.03, "price": 200, "min_level": 1},
+    {"code": "phone_t2", "name": "Смартфон «Pulse Max»", "slot": "phone", "tier": 2, "bonus_type": "passive_pct", "bonus_value": 0.06, "price": 400, "min_level": 2},
+    {"code": "phone_t3", "name": "Смартфон «Nova Edge»", "slot": "phone", "tier": 3, "bonus_type": "passive_pct", "bonus_value": 0.10, "price": 750, "min_level": 3},
 
-    {"code": "tablet_t1", "name": "Планшет T1", "slot": "tablet", "tier": 1, "bonus_type": "req_clicks_pct", "bonus_value": 0.02, "price": 300, "min_level": 1},
-    {"code": "tablet_t2", "name": "Планшет T2", "slot": "tablet", "tier": 2, "bonus_type": "req_clicks_pct", "bonus_value": 0.04, "price": 600, "min_level": 2},
-    {"code": "tablet_t3", "name": "Планшет T3", "slot": "tablet", "tier": 3, "bonus_type": "req_clicks_pct", "bonus_value": 0.06, "price": 950, "min_level": 3},
+    {"code": "tablet_t1", "name": "Планшет «TabFlow»", "slot": "tablet", "tier": 1, "bonus_type": "req_clicks_pct", "bonus_value": 0.02, "price": 300, "min_level": 1},
+    {"code": "tablet_t2", "name": "Планшет «SketchWave»", "slot": "tablet", "tier": 2, "bonus_type": "req_clicks_pct", "bonus_value": 0.04, "price": 600, "min_level": 2},
+    {"code": "tablet_t3", "name": "Планшет «FrameMaster»", "slot": "tablet", "tier": 3, "bonus_type": "req_clicks_pct", "bonus_value": 0.06, "price": 950, "min_level": 3},
 
-    {"code": "monitor_t1", "name": "Монитор T1", "slot": "monitor", "tier": 1, "bonus_type": "reward_pct", "bonus_value": 0.04, "price": 350, "min_level": 1},
-    {"code": "monitor_t2", "name": "Монитор T2", "slot": "monitor", "tier": 2, "bonus_type": "reward_pct", "bonus_value": 0.08, "price": 700, "min_level": 2},
-    {"code": "monitor_t3", "name": "Монитор T3", "slot": "monitor", "tier": 3, "bonus_type": "reward_pct", "bonus_value": 0.12, "price": 1050, "min_level": 3},
+    {"code": "monitor_t1", "name": "Монитор «PixelWide»", "slot": "monitor", "tier": 1, "bonus_type": "reward_pct", "bonus_value": 0.04, "price": 350, "min_level": 1},
+    {"code": "monitor_t2", "name": "Монитор «VisionGrid»", "slot": "monitor", "tier": 2, "bonus_type": "reward_pct", "bonus_value": 0.08, "price": 700, "min_level": 2},
+    {"code": "monitor_t3", "name": "Монитор «UltraCanvas»", "slot": "monitor", "tier": 3, "bonus_type": "reward_pct", "bonus_value": 0.12, "price": 1050, "min_level": 3},
 
-    {"code": "chair_t1", "name": "Стул T1", "slot": "chair", "tier": 1, "bonus_type": "ratelimit_plus", "bonus_value": 0, "price": 150, "min_level": 1},
-    {"code": "chair_t2", "name": "Стул T2", "slot": "chair", "tier": 2, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 400, "min_level": 2},
-    {"code": "chair_t3", "name": "Стул T3", "slot": "chair", "tier": 3, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 600, "min_level": 3},
-    {"code": "chair_t4", "name": "Стул T4", "slot": "chair", "tier": 4, "bonus_type": "ratelimit_plus", "bonus_value": 2, "price": 1000, "min_level": 4},
+    {"code": "chair_t1", "name": "Стул «Кафе»", "slot": "chair", "tier": 1, "bonus_type": "ratelimit_plus", "bonus_value": 0, "price": 150, "min_level": 1},
+    {"code": "chair_t2", "name": "Стул «Balance»", "slot": "chair", "tier": 2, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 400, "min_level": 2},
+    {"code": "chair_t3", "name": "Стул «Flow»", "slot": "chair", "tier": 3, "bonus_type": "ratelimit_plus", "bonus_value": 1, "price": 600, "min_level": 3},
+    {"code": "chair_t4", "name": "Стул «Gravity»", "slot": "chair", "tier": 4, "bonus_type": "ratelimit_plus", "bonus_value": 2, "price": 1000, "min_level": 4},
     {"code": "client_contract", "name": "Талисман клиента", "slot": "charm", "tier": 1, "bonus_type": "req_clicks_pct", "bonus_value": 0.03, "price": 0, "min_level": 2},
 ]
 
@@ -1940,6 +1940,12 @@ def format_money(value: float) -> str:
     return f"{int(round(value)):,}".replace(",", " ")
 
 
+def format_price(value: float) -> str:
+    """Format ruble amounts with the currency sign."""
+
+    return f"{format_money(value)}{RU.CURRENCY}"
+
+
 async def fetch_average_income_rows(session: AsyncSession) -> List[Tuple[int, str, float]]:
     """Return per-user average income composed of passive and active totals."""
 
@@ -2528,8 +2534,121 @@ async def shop_root(message: Message, state: FSMContext):
     await message.answer(RU.SHOP_HEADER, reply_markup=kb_shop_menu())
 
 
-def fmt_boosts(lines: List[str]) -> str:
-    return "\n".join(lines) if lines else "Нет бустов."
+BOOST_TYPE_META: Dict[str, Tuple[str, str, str]] = {
+    "cp": ("⚡️", "Клик", "за нажатие"),
+    "reward": ("🎯", "Награда", "к наградам"),
+    "passive": ("💼", "Пассивный доход", "к пассивному доходу"),
+}
+
+ITEM_BONUS_LABELS: Dict[str, str] = {
+    "cp_pct": "к силе клика",
+    "passive_pct": "к пассивному доходу",
+    "req_clicks_pct": "к требуемым кликам",
+    "reward_pct": "к наградам",
+    "ratelimit_plus": "к лимиту кликов",
+    "cp_add": "к силе клика",
+}
+
+ITEM_SLOT_EMOJI: Dict[str, str] = {
+    "chair": "🪑",
+    "laptop": "💻",
+    "monitor": "🖥️",
+    "phone": "📱",
+    "tablet": "📲",
+    "charm": "📜",
+}
+
+
+def _boost_display(boost: Boost) -> Tuple[str, str, str]:
+    """Return icon, label and effect description for a boost."""
+
+    icon, label, suffix = BOOST_TYPE_META.get(
+        boost.type, ("✨", boost.name, "к характеристике")
+    )
+    step = boost.step_value
+    if boost.type == "cp":
+        effect = f"+{int(round(step))} {suffix}"
+    elif boost.type in {"reward", "passive"}:
+        effect = f"+{int(round(step * 100))}% {suffix}"
+    else:
+        effect = f"+{int(round(step))} {suffix}"
+    return icon, label or boost.name, effect
+
+
+def _format_item_effect(item: Item) -> str:
+    """Human readable representation of an item's bonus."""
+
+    label = ITEM_BONUS_LABELS.get(item.bonus_type, "к характеристике")
+    if item.bonus_type.endswith("_pct"):
+        value = f"+{int(round(item.bonus_value * 100))}%"
+    else:
+        value = f"+{int(round(item.bonus_value))}"
+    return f"{value} {label}"
+
+
+def _item_icon(item: Item) -> str:
+    """Emoji icon for the given equipment slot."""
+
+    return ITEM_SLOT_EMOJI.get(item.slot, "🎁")
+
+
+def fmt_boosts(
+    user: User, boosts: List[Boost], levels: Dict[int, int], page: int, page_size: int = 5
+) -> str:
+    """Compose a formatted boost list with balance and pricing."""
+
+    lines = [f"💰 Ваш баланс: {format_price(user.balance)}", "🚀 Бусты"]
+    if not boosts:
+        lines.append("Пока нечего прокачать — возвращайтесь позже.")
+        return "\n".join(lines)
+
+    start_index = page * page_size
+    for offset, boost in enumerate(boosts, 1):
+        icon, label, effect = _boost_display(boost)
+        lvl_next = levels.get(boost.id, 0) + 1
+        cost = format_price(upgrade_cost(boost.base_cost, boost.growth, lvl_next))
+        lines.append(
+            f"{start_index + offset}. {icon} {label} — {effect} · ур.→{lvl_next} · {cost}"
+        )
+    return "\n".join(lines)
+
+
+def format_boost_purchase_prompt(
+    boost: Boost, current_level: int, next_level: int, cost: int
+) -> str:
+    """Pretty confirmation text for a boost upgrade purchase."""
+
+    icon, label, effect = _boost_display(boost)
+    return (
+        f"{icon} Улучшение «{label}»\n"
+        f"Текущий уровень: {current_level}\n"
+        f"После покупки: {next_level}\n"
+        f"Эффект уровня: {effect}\n"
+        f"Стоимость: {format_price(cost)}"
+    )
+
+
+def format_item_purchase_prompt(item: Item) -> str:
+    """Pretty confirmation text for buying an equipment piece."""
+
+    icon = _item_icon(item)
+    effect = _format_item_effect(item)
+    return (
+        f"{icon} Покупка «{item.name}»\n"
+        f"Эффект: {effect}\n"
+        f"Цена: {format_price(item.price)}"
+    )
+
+
+def format_item_equip_prompt(item: Item) -> str:
+    """Confirmation prompt shown when the user equips an owned item."""
+
+    icon = _item_icon(item)
+    effect = _format_item_effect(item)
+    return (
+        f"{icon} Экипировать «{item.name}»?\n"
+        f"Эффект: {effect}"
+    )
 
 
 async def render_boosts(message: Message, state: FSMContext):
@@ -2553,12 +2672,10 @@ async def render_boosts(message: Message, state: FSMContext):
         }
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(boosts, page, 5)
-        lines = []
-        for i, b in enumerate(sub, 1):
-            lvl_next = levels.get(b.id, 0) + 1
-            cost = upgrade_cost(b.base_cost, b.growth, lvl_next)
-            lines.append(f"[{i}] {b.name} — ур. след. {lvl_next}, {cost} {RU.CURRENCY}")
-        await message.answer(fmt_boosts(lines), reply_markup=kb_numeric_page(has_prev, has_next))
+        await message.answer(
+            fmt_boosts(user, sub, levels, page),
+            reply_markup=kb_numeric_page(has_prev, has_next),
+        )
         await state.update_data(boost_ids=[b.id for b in sub], page=page)
         await notify_new_achievements(message, achievements)
 
@@ -2594,10 +2711,13 @@ async def shop_choose_boost(message: Message, state: FSMContext):
         )
         lvl_next = (user_boost.level if user_boost else 0) + 1
         cost = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
-        await message.answer(
-            f"Купить буст «{boost.name}» (ур. след. {lvl_next}) за {cost} {RU.CURRENCY}?",
-            reply_markup=kb_confirm(RU.BTN_BUY),
+        prompt = format_boost_purchase_prompt(
+            boost,
+            user_boost.level if user_boost else 0,
+            lvl_next,
+            cost,
         )
+        await message.answer(prompt, reply_markup=kb_confirm(RU.BTN_BUY))
     await state.set_state(ShopState.confirm_boost)
     await state.update_data(boost_id=bid)
 
@@ -2683,22 +2803,26 @@ async def shop_cancel_boost(message: Message, state: FSMContext):
 
 # --- Магазин: экипировка ---
 
-def fmt_items(items: List[Item]) -> str:
+def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool = True) -> str:
+    """Format equipment listings with balance, icons and effects."""
+
+    lines: List[str] = []
+    if include_price:
+        lines.append(f"💰 Ваш баланс: {format_price(user.balance)}")
+    lines.append("🚀 Предметы" if include_price else "🎒 Гардероб")
+
     if not items:
-        return "Нет доступных предметов."
-    lines = []
-    for i, it in enumerate(items, 1):
-        bonus_label = {
-            "cp_pct": "к силе клика",
-            "passive_pct": "к пассивному доходу",
-            "req_clicks_pct": "к требуемым кликам",
-            "reward_pct": "к наградам",
-            "ratelimit_plus": "к лимиту кликов",
-        }.get(it.bonus_type, "к характеристике")
-        bonus_value = f"+{int(it.bonus_value * 100)}%" if "_pct" in it.bonus_type else f"+{int(it.bonus_value)}"
-        lines.append(
-            f"[{i}] {it.name} ({it.slot}, T{it.tier}) — {it.price} {RU.CURRENCY} ({bonus_value} {bonus_label})"
-        )
+        lines.append("Пока ничего нет — загляните позже.")
+        return "\n".join(lines)
+
+    start_index = page * 5
+    for offset, it in enumerate(items, 1):
+        icon = _item_icon(it)
+        effect = _format_item_effect(it)
+        entry = f"{start_index + offset}. {icon} {it.name} — {effect}"
+        if include_price:
+            entry = f"{entry} · {format_price(it.price)}"
+        lines.append(entry)
     return "\n".join(lines)
 
 
@@ -2713,7 +2837,10 @@ async def render_items(message: Message, state: FSMContext):
         items = await get_next_items_for_user(session, user)
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(items, page, 5)
-        await message.answer(fmt_items(sub), reply_markup=kb_numeric_page(has_prev, has_next))
+        await message.answer(
+            fmt_items(user, sub, page, include_price=True),
+            reply_markup=kb_numeric_page(has_prev, has_next),
+        )
         await state.update_data(item_ids=[it.id for it in sub], page=page)
         await notify_new_achievements(message, achievements)
 
@@ -2744,10 +2871,8 @@ async def shop_choose_item(message: Message, state: FSMContext):
             await message.answer("Предмет не найден.")
             await render_items(message, state)
             return
-        await message.answer(
-            f"Купить предмет «{it.name}» за {it.price} {RU.CURRENCY}?",
-            reply_markup=kb_confirm(RU.BTN_BUY),
-        )
+        prompt = format_item_purchase_prompt(it)
+        await message.answer(prompt, reply_markup=kb_confirm(RU.BTN_BUY))
     await state.set_state(ShopState.confirm_item)
     await state.update_data(item_id=item_id)
 
@@ -2816,14 +2941,18 @@ async def shop_buy_item(message: Message, state: FSMContext):
                 select(Item).where(Item.slot == item.slot, Item.tier == item.tier + 1)
             )
             if next_item:
-                next_hint = f"Следующий уровень: {next_item.name} за {next_item.price} {RU.CURRENCY}."
+                next_hint = (
+                    f"Следующий уровень: {next_item.name} за {format_price(next_item.price)}."
+                )
             else:
                 proj_bonus, proj_price = project_next_item_params(item)
                 if "_pct" in item.bonus_type:
                     bonus_str = f"≈+{int(proj_bonus * 100)}%"
                 else:
                     bonus_str = f"≈+{int(proj_bonus)}"
-                next_hint = f"Следующий уровень (по формуле): {proj_price} {RU.CURRENCY}, {bonus_str}."
+                next_hint = (
+                    f"Следующий уровень (по формуле): {format_price(proj_price)}, {bonus_str}."
+                )
             await message.answer(f"{RU.PURCHASE_OK}\n{next_hint}")
         await notify_new_achievements(message, achievements)
     await state.set_state(ShopState.equipment)
@@ -3010,13 +3139,13 @@ async def team_upgrade_cancel(message: Message, state: FSMContext):
 
 # --- Гардероб ---
 
-def fmt_inventory(items: List[Item]) -> str:
-    if not items:
-        return "Инвентарь пуст."
-    lines = [RU.WARDROBE_HEADER]
-    for i, it in enumerate(items, 1):
-        lines.append(f"[{i}] {it.name} ({it.slot}, T{it.tier})")
-    return "\n".join(lines)
+def fmt_inventory(user: User, items: List[Item], page: int) -> str:
+    """Render wardrobe entries with the same visual style as the shop."""
+
+    text = fmt_items(user, items, page, include_price=False)
+    if "Пока ничего нет" in text:
+        return text.replace("Пока ничего нет", "Гардероб пуст — загляните в магазин.")
+    return text
 
 
 async def render_inventory(message: Message, state: FSMContext):
@@ -3037,7 +3166,10 @@ async def render_inventory(message: Message, state: FSMContext):
         ).scalars().all()
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(items, page, 5)
-        await message.answer(fmt_inventory(sub), reply_markup=kb_numeric_page(has_prev, has_next))
+        await message.answer(
+            fmt_inventory(user, sub, page),
+            reply_markup=kb_numeric_page(has_prev, has_next),
+        )
         await state.update_data(inv_ids=[it.id for it in sub], page=page)
         await notify_new_achievements(message, achievements)
 
@@ -3068,7 +3200,8 @@ async def wardrobe_choose(message: Message, state: FSMContext):
             await message.answer("Предмет не найден.")
             await render_inventory(message, state)
             return
-        await message.answer(f"Экипировать «{it.name}»?", reply_markup=kb_confirm(RU.BTN_EQUIP))
+        prompt = format_item_equip_prompt(it)
+        await message.answer(prompt, reply_markup=kb_confirm(RU.BTN_EQUIP))
     await state.set_state(WardrobeState.equip_confirm)
     await state.update_data(item_id=item_id)
 
