@@ -162,7 +162,7 @@ class RU:
     BTN_ORDERS = "📋 Заказы"
     BTN_UPGRADES = "🛠️ Улучшения"
     BTN_SHOP = "🛒 Магазин"
-    BTN_TEAM = "🧑‍🤝‍🧑 Команда"
+    BTN_TEAM = "👥 Команда"
     BTN_WARDROBE = "🎽 Гардероб"
     BTN_PROFILE = "👤 Профиль"
     BTN_STATS = "🏆 Топ"
@@ -217,17 +217,17 @@ class RU:
     DAILY_OK = "🎁 Начислен ежедневный бонус: {rub} ₽."
     DAILY_WAIT = "⏰ Бонус уже получен. Загляните позже."
     PROFILE = (
-        "🧑‍💼 {name} — 🏅 ур: {lvl}\n"
-        "✨ XP: {xp}/{xp_need} [{xp_bar}] {xp_pct}%\n"
-        "💰 Баланс: {rub} ₽, 📈 Ср. доход: {avg} ₽\n"
-        "🖱️ Клик: {cp}, 💤 Пассив: {passive}\n"
+        "🧑‍💼 {name} · 🏅 Ур. {lvl}\n"
+        "✨ XP: {xp}/{xp_need} {xp_bar} {xp_pct}%\n"
+        "💰 Баланс: {rub} ₽ · 📈 Ср. доход: {avg} ₽\n"
+        "🖱️ Сила клика: {cp} · 💤 Пассив: {passive}/мин\n"
         "📌 Заказ: {order}\n"
         "🛡️ Баффы: {buffs}\n"
         "📜 Кампания: {campaign}\n"
         "🏢 Репутация: {rep}"
     )
-    TEAM_HEADER = "🧑‍🤝‍🧑 Команда (доход/мин, уровень, цена повышения):"
-    TEAM_LOCKED = "🧑‍🤝‍🧑 Команда откроется со 2 уровня."
+    TEAM_HEADER = "👥 Команда (доход/мин, уровень, цена повышения):"
+    TEAM_LOCKED = "👥 Команда откроется со 2 уровня."
     SHOP_HEADER = "🛒 Магазин: выберите раздел для прокачки."
     WARDROBE_HEADER = "🎽 Гардероб: слоты и доступные предметы."
     ORDERS_HEADER = "📋 Доступные заказы"
@@ -868,7 +868,7 @@ SEED_ACHIEVEMENTS = [
     {"code": "level_10", "name": "Легенда студии", "description": "Достигните 10 уровня.", "trigger": "level", "threshold": 10, "icon": "🏅"},
     {"code": "balance_5000", "name": "Капиталист", "description": "Накопите 5000 ₽ на счету.", "trigger": "balance", "threshold": 5000, "icon": "💰"},
     {"code": "passive_2000", "name": "Доход во сне", "description": "Получите 2000 ₽ пассивного дохода.", "trigger": "passive_income", "threshold": 2000, "icon": "💤"},
-    {"code": "team_3", "name": "Своя студия", "description": "Нанимайте или прокачайте 3 членов команды.", "trigger": "team", "threshold": 3, "icon": "🧑‍🤝‍🧑"},
+    {"code": "team_3", "name": "Своя студия", "description": "Нанимайте или прокачайте 3 членов команды.", "trigger": "team", "threshold": 3, "icon": "👥"},
     {"code": "wardrobe_5", "name": "Коллекционер", "description": "Соберите 5 предметов экипировки.", "trigger": "items", "threshold": 5, "icon": "🎽"},
 ]
 
@@ -2439,10 +2439,10 @@ async def resume_order_work(message: Message):
 # --- Заказы ---
 
 def fmt_orders(orders: List[Order]) -> str:
-    lines = [RU.ORDERS_HEADER, "", "Введите номер для выбора:", ""]
+    lines = [RU.ORDERS_HEADER, "Введите номер для выбора:", ""]
     for i, o in enumerate(orders, 1):
         lines.append(
-            f"{circled_number(i)} {pick_order_icon(o.title)} {o.title} — мин. ур: {o.min_level}"
+            f"{circled_number(i)} {pick_order_icon(o.title)} {o.title} — мин. ур. {o.min_level}"
         )
     return "\n".join(lines)
 
@@ -2608,21 +2608,6 @@ BOOST_TYPE_META: Dict[str, Tuple[str, str, str]] = {
     "passive": ("💼", "Пассивный доход", "к пассивному доходу"),
 }
 
-TEAM_MEMBER_ICONS: Dict[str, str] = {
-    "junior": "🎨",
-    "middle": "🧠",
-    "senior": "🏆",
-    "pm": "🧭",
-}
-
-TEAM_LEVEL_TITLES: Tuple[str, ...] = (
-    "🔰 Новичок",
-    "🧪 Стажёр",
-    "🎯 Исполнитель",
-    "🧠 Наставник",
-    "⭐ Легенда",
-)
-
 ITEM_BONUS_LABELS: Dict[str, str] = {
     "cp_pct": "к силе клика",
     "passive_pct": "к пассивному доходу",
@@ -2658,22 +2643,6 @@ def _boost_display(boost: Boost) -> Tuple[str, str, str]:
     return icon, label or boost.name, effect
 
 
-def _team_icon(member: TeamMember) -> str:
-    """Return an emoji for a team member code."""
-
-    return TEAM_MEMBER_ICONS.get(member.code, "👥")
-
-
-def _team_rank(level: int) -> str:
-    """Return a flavorful rank label for the provided level."""
-
-    if level <= 0:
-        return TEAM_LEVEL_TITLES[0]
-    if level < len(TEAM_LEVEL_TITLES):
-        return TEAM_LEVEL_TITLES[level]
-    return TEAM_LEVEL_TITLES[-1]
-
-
 def _format_item_effect(item: Item) -> str:
     """Human readable representation of an item's bonus."""
 
@@ -2694,14 +2663,9 @@ def _item_icon(item: Item) -> str:
 def fmt_boosts(
     user: User, boosts: List[Boost], levels: Dict[int, int], page: int, page_size: int = 5
 ) -> str:
-    """Compose a formatted boost list with balance, header and upgrade hints."""
+    """Compose a formatted boost list with balance and pricing."""
 
-    lines = [
-        f"💰 Ваш баланс: {format_price(user.balance)}",
-        "",
-        "🚀 Бусты",
-        "",
-    ]
+    lines = [f"💰 Ваш баланс: {format_price(user.balance)}", ""]
     if not boosts:
         lines.append("Пока нечего прокачать — возвращайтесь позже.")
         return "\n".join(lines)
@@ -2710,10 +2674,9 @@ def fmt_boosts(
     for offset, boost in enumerate(boosts, 1):
         icon, label, effect = _boost_display(boost)
         lvl_next = levels.get(boost.id, 0) + 1
-        cost_value = upgrade_cost(boost.base_cost, boost.growth, lvl_next)
-        idx = circled_number(start_index + offset)
+        cost = format_price(upgrade_cost(boost.base_cost, boost.growth, lvl_next))
         lines.append(
-            f"{idx} {icon} {label} — {effect}, ур: {lvl_next}, цена: {format_price(cost_value)}"
+            f"{start_index + offset}. {icon} {label} — {effect} · ур.→{lvl_next} · {cost}"
         )
     return "\n".join(lines)
 
@@ -2909,33 +2872,24 @@ async def shop_cancel_boost(message: Message, state: FSMContext):
 # --- Магазин: экипировка ---
 
 def fmt_items(user: User, items: List[Item], page: int, *, include_price: bool = True) -> str:
-    """Format equipment or wardrobe listings in the unified visual style."""
+    """Format equipment listings with balance, icons and effects."""
 
-    header = "🧰 Экипировка" if include_price else "👕 Гардероб"
-    lines: List[str] = [
-        f"💰 Ваш баланс: {format_price(user.balance)}",
-        "",
-        header,
-        "",
-    ]
+    lines: List[str] = []
+    if include_price:
+        lines.append(f"💰 Ваш баланс: {format_price(user.balance)}")
+    lines.append("" if include_price else "")
 
     if not items:
-        empty = (
-            "Пока ничего нет — загляните позже."
-            if include_price
-            else "Гардероб пуст — загляните в магазин."
-        )
-        lines.append(empty)
+        lines.append("Пока ничего нет — загляните позже.")
         return "\n".join(lines)
 
     start_index = page * 5
     for offset, it in enumerate(items, 1):
         icon = _item_icon(it)
         effect = _format_item_effect(it)
-        idx = circled_number(start_index + offset)
-        entry = f"{idx} {icon} {it.name} — {effect}"
+        entry = f"{start_index + offset}. {icon} {it.name} — {effect}"
         if include_price:
-            entry = f"{entry}, цена: {format_price(it.price)}"
+            entry = f"{entry} · {format_price(it.price)}"
         lines.append(entry)
     return "\n".join(lines)
 
@@ -3082,43 +3036,13 @@ async def shop_cancel_item(message: Message, state: FSMContext):
 
 # --- Команда ---
 
-def fmt_team(
-    user: User,
-    members: List[TeamMember],
-    levels: Dict[int, int],
-    costs: Dict[int, int],
-    page: int,
-) -> str:
-    """Render team overview with circled numbering and progress bars."""
-
-    lines: List[str] = [
-        "👥 Команда",
-        "(доход/мин, уровень, цена повышения)",
-        "",
-    ]
-    if not members:
-        lines.append("Пока никто не нанят — открывайте новых специалистов уровнем выше.")
-        return "\n".join(lines)
-
-    start_index = page * 5
-    for offset, member in enumerate(members, 1):
-        lvl = levels.get(member.id, 0)
+def fmt_team(sub: List[TeamMember], levels: Dict[int, int], costs: Dict[int, int]) -> str:
+    lines = [RU.TEAM_HEADER]
+    for i, m in enumerate(sub, 1):
+        lvl = levels.get(m.id, 0)
         income = team_income_per_min(m.base_income_per_min, lvl)
-        cost = costs[member.id]
-        icon = _team_icon(member)
-        idx = circled_number(start_index + offset)
-        rank_label = _team_rank(lvl)
-        progress_value = min(user.balance, cost)
-        bar = render_progress_bar(progress_value, cost, filled_char="█", empty_char="░")
-        lines.append(
-            f"{idx} {icon} {member.name} — {format_money(income)} ₽/мин, ур: {lvl}, апгр: {format_price(cost)}"
-        )
-        lines.append(f"   {rank_label}")
-        lines.append(
-            f"   Прогресс к повышению: [{bar}] {format_money(progress_value)}/{format_money(cost)} ₽"
-        )
-        lines.append("")
-    return "\n".join(lines).rstrip()
+        lines.append(f"[{i}] {m.name}: {income:.0f}/мин, ур. {lvl}, цена повышения {costs[m.id]} {RU.CURRENCY}")
+    return "\n".join(lines)
 
 
 async def render_team(message: Message, state: FSMContext):
@@ -3152,10 +3076,7 @@ async def render_team(message: Message, state: FSMContext):
         costs = {m.id: int(round(m.base_cost * (1.22 ** max(0, levels.get(m.id, 0))))) for m in members}
         page = int((await state.get_data()).get("page", 0))
         sub, has_prev, has_next = slice_page(members, page, 5)
-        await message.answer(
-            fmt_team(user, sub, levels, costs, page),
-            reply_markup=kb_numeric_page(has_prev, has_next),
-        )
+        await message.answer(fmt_team(sub, levels, costs), reply_markup=kb_numeric_page(has_prev, has_next))
         await state.update_data(member_ids=[m.id for m in sub], page=page)
         await notify_new_achievements(message, achievements)
 
@@ -3289,7 +3210,10 @@ async def team_upgrade_cancel(message: Message, state: FSMContext):
 def fmt_inventory(user: User, items: List[Item], page: int) -> str:
     """Render wardrobe entries with the same visual style as the shop."""
 
-    return fmt_items(user, items, page, include_price=False)
+    text = fmt_items(user, items, page, include_price=False)
+    if "Пока ничего нет" in text:
+        return text.replace("Пока ничего нет", "Гардероб пуст — загляните в магазин.")
+    return text
 
 
 async def render_inventory(message: Message, state: FSMContext):
@@ -3437,8 +3361,7 @@ async def profile_show(message: Message, state: FSMContext):
             if ord_row:
                 order_bar = render_progress_bar(active.progress_clicks, active.required_clicks)
                 order_str = (
-                    f"{ord_row.title} — {active.progress_clicks}/{active.required_clicks} "
-                    f"[{order_bar}]"
+                    f"{ord_row.title} — {active.progress_clicks}/{active.required_clicks} {order_bar}"
                 )
         now = utcnow()
         buffs = (
@@ -3461,12 +3384,12 @@ async def profile_show(message: Message, state: FSMContext):
                 campaign_goal_progress(definition.get("goal", {}), campaign.progress or {}),
                 1.0,
             )
-            status_icon = " ✅" if pct >= 100 else ""
+            status_icon = "✅" if pct >= 100 else ""
             campaign_text = (
-                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}% выполнено{status_icon}"
-            )
+                f"{definition['chapter']}/{len(CAMPAIGN_CHAPTERS)} — {pct}% {status_icon}"
+            ).strip()
         else:
-            campaign_text = "все главы завершены ✅"
+            campaign_text = "все главы — 100% ✅"
         prestige = await get_prestige_entry(session, user)
         xp_need = max(1, xp_to_level(user.level))
         xp_pct = percentage(user.xp, xp_need)
@@ -3482,7 +3405,7 @@ async def profile_show(message: Message, state: FSMContext):
             rub=format_money(user.balance),
             avg=format_money(avg_income),
             cp=format_stat(stats["cp"]),
-            passive=f"{passive_per_min} ₽/мин",
+            passive=f"{passive_per_min} ₽",
             order=order_str,
             buffs=buffs_text,
             campaign=campaign_text,
@@ -3673,7 +3596,7 @@ async def show_achievements(message: Message):
     if not rows:
         await message.answer(RU.ACHIEVEMENTS_EMPTY, reply_markup=markup)
         return
-    lines = [RU.ACHIEVEMENTS_TITLE, ""]
+    lines = [RU.ACHIEVEMENTS_TITLE]
     for ach, ua in rows:
         unlocked = bool(ua and ua.unlocked_at)
         current = ua.progress if ua else 0
@@ -3684,7 +3607,7 @@ async def show_achievements(message: Message):
         bar = render_progress_bar(current, target, filled_char="█", empty_char="░")
         status_icon = "✅" if unlocked else "⬜️"
         lines.append(
-            f"{status_icon} {ach.icon} {ach.name} — [{bar}] {pct}%, {current}/{target}"
+            f"{status_icon} {ach.icon} {ach.name} — [{bar}] {pct}% · {current}/{target}"
         )
     await message.answer("\n".join(lines), reply_markup=markup)
 
